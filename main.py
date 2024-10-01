@@ -23,6 +23,11 @@ server_notification_channels = {}
 # 通話開始時間と最初に通話を開始した人を記録する辞書
 call_sessions = {}
 
+# UTCからJSTに変換する関数
+def convert_utc_to_jst(utc_time):
+    jst_time = utc_time + datetime.timedelta(hours=9)
+    return jst_time
+
 # 通話開始・終了時に通知するためのイベント
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -33,10 +38,13 @@ async def on_voice_state_update(member, before, after):
             start_time = datetime.datetime.utcnow()  # 現在時刻をUTCで取得
             call_sessions[guild_id] = {"start_time": start_time, "first_member": member.id}
 
+            jst_time = convert_utc_to_jst(start_time)  # JSTに変換
+
             embed = discord.Embed(title="通話開始", color=0xffa5a5)
+            embed.set_thumbnail(url=member.avatar.url)  # ユーザーアイコンを表示
             embed.add_field(name="`チャンネル`", value=f"{after.channel.name}")
             embed.add_field(name="`始めた人`", value=f"{member.display_name}")
-            embed.add_field(name="`開始時間`", value=f"{start_time.strftime('%Y/%m/%d %H:%M:%S UTC')}")
+            embed.add_field(name="`開始時間`", value=f"{jst_time.strftime('%Y/%m/%d %H:%M:%S')}")  # JST表記
 
             # サーバーごとに設定された通知チャンネルにメッセージを送信
             if guild_id in server_notification_channels:
@@ -58,6 +66,7 @@ async def on_voice_state_update(member, before, after):
             embed = discord.Embed(title="通話終了", color=0x89c9ff)
             embed.add_field(name="`チャンネル`", value=f"{voice_channel.name}")
             embed.add_field(name="`通話時間`", value=f"{duration_str}")
+            # 「通話終了」の際はアイコンを表示しないため、set_thumbnailは使用しない
 
             # サーバーごとに設定された通知チャンネルにメッセージを送信
             if guild_id in server_notification_channels:
