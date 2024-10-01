@@ -12,8 +12,6 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
 intents = discord.Intents.default()
-intents.voice_state_update = True  # ボイスチャンネルの変更イベントを有効にする
-intents.members = True  # メンバー情報の取得を許可する
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
