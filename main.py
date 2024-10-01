@@ -40,7 +40,7 @@ async def on_voice_state_update(member, before, after):
 
             jst_time = convert_utc_to_jst(start_time)  # JSTに変換
 
-            embed = discord.Embed(title="通話開始", color=0xffa5a5)
+            embed = discord.Embed(title="通話開始", color=0xea958f)
             embed.set_thumbnail(url=member.avatar.url)  # ユーザーアイコンを表示
             embed.add_field(name="`チャンネル`", value=f"{after.channel.name}")
             embed.add_field(name="`始めた人`", value=f"{member.display_name}")
@@ -63,7 +63,7 @@ async def on_voice_state_update(member, before, after):
             minutes, seconds = divmod(remainder, 60)
             duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
 
-            embed = discord.Embed(title="通話終了", color=0x89c9ff)
+            embed = discord.Embed(title="通話終了", color=0x938dfd)
             embed.add_field(name="`チャンネル`", value=f"{voice_channel.name}")
             embed.add_field(name="`通話時間`", value=f"{duration_str}")
             # 「通話終了」の際はアイコンを表示しないため、set_thumbnailは使用しない
