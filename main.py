@@ -1,8 +1,9 @@
-import discord
+import discord 
 from discord import app_commands
 from discord.ext import commands
 import datetime
 import os
+from zoneinfo import ZoneInfo  # 追加
 from dotenv import load_dotenv
 
 # .envファイルの環境変数を読み込む
@@ -25,9 +26,9 @@ server_notification_channels = {}
 # サーバーごとの音声チャンネルごとに辞書を分ける
 call_sessions = {}
 
-# UTCからJSTに変換する関数
+# UTCからJSTに変換する関数 (astimezone方式に変更)
 def convert_utc_to_jst(utc_time):
-    jst_time = utc_time + datetime.timedelta(hours=9)
+    jst_time = utc_time.astimezone(ZoneInfo("Asia/Tokyo"))  # JSTに変換
     return jst_time
 
 # 通話開始・終了時に通知するためのイベント
@@ -43,7 +44,7 @@ async def on_voice_state_update(member, before, after):
             call_sessions[guild_id] = {}  # サーバーごとに音声チャンネル辞書を初期化
 
         if voice_channel_id not in call_sessions[guild_id]:
-            start_time = datetime.datetime.utcnow()  # 現在時刻をUTCで取得
+            start_time = datetime.datetime.now(datetime.timezone.utc)  # 現在時刻をUTCで取得
             call_sessions[guild_id][voice_channel_id] = {"start_time": start_time, "first_member": member.id}
 
             jst_time = convert_utc_to_jst(start_time)  # JSTに変換
@@ -58,6 +59,8 @@ async def on_voice_state_update(member, before, after):
             if guild_id in server_notification_channels:
                 notification_channel = bot.get_channel(server_notification_channels[guild_id])
                 if notification_channel:
+                    # @everyone を含むメッセージを送信
+                    await notification_channel.send("@everyone")
                     await notification_channel.send(embed=embed)
 
     # 通話終了：最後に通話から抜けた人に通知
@@ -69,7 +72,7 @@ async def on_voice_state_update(member, before, after):
             if len(voice_channel.members) == 0:
                 session = call_sessions[guild_id].pop(voice_channel_id)
                 start_time = session["start_time"]
-                call_duration = datetime.datetime.utcnow() - start_time  # 通話時間を計算
+                call_duration = datetime.datetime.now(datetime.timezone.utc) - start_time  # 通話時間を計算
                 hours, remainder = divmod(call_duration.total_seconds(), 3600)
                 minutes, seconds = divmod(remainder, 60)
                 duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
