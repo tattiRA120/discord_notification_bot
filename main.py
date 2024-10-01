@@ -12,6 +12,8 @@ load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
 intents = discord.Intents.default()
+intents.voice_states = True  # ボイスチャンネルの変更イベントを有効にする
+intents.members = True  # メンバー情報の取得を許可する
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -29,11 +31,11 @@ async def on_voice_state_update(member, before, after):
         start_time = datetime.datetime.utcnow()  # 現在時刻をUTCで取得
         call_start_times[member.id] = start_time  # ユーザーIDをキーにして開始時間を記録
 
-        embed = discord.Embed(title="通話開始", description=f"{member.display_name} さんが {after.channel.name} で通話を始めました。", color=0x00ff00)
+        embed = discord.Embed(title="通話開始", color=0xffa5a5)
         embed.set_thumbnail(url=member.avatar.url)
-        embed.add_field(name="チャンネル", value=after.channel.name)
-        embed.add_field(name="始めた人", value=member.display_name)
-        embed.set_footer(text=f"開始時間: {start_time.strftime('%Y/%m/%d %H:%M:%S UTC')}")  # UTC時間を表示
+        embed.add_field(name="チャンネル", value=f"`{after.channel.name}`")
+        embed.add_field(name="始めた人", value=f"`{member.display_name}`")
+        embed.add_field(name="開始時間", value=f"`{start_time.strftime('%Y/%m/%d %H:%M:%S UTC')}`")
 
         # サーバーごとに設定された通知チャンネルにメッセージを送信
         guild_id = member.guild.id
@@ -44,21 +46,18 @@ async def on_voice_state_update(member, before, after):
 
     # 通話終了
     elif before.channel is not None and after.channel is None:
-        end_time = datetime.datetime.utcnow()  # 通話終了時間を取得
-
         # 通話開始時間が記録されている場合、通話時間を計算
         if member.id in call_start_times:
             start_time = call_start_times.pop(member.id)  # 開始時間を取得して辞書から削除
-            call_duration = end_time - start_time  # 通話時間を計算
+            call_duration = datetime.datetime.utcnow() - start_time  # 通話時間を計算
             hours, remainder = divmod(call_duration.total_seconds(), 3600)
             minutes, seconds = divmod(remainder, 60)
             duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
 
-            embed = discord.Embed(title="通話終了", description=f"{member.display_name} さんが {before.channel.name} で通話を終了しました。", color=0xff0000)
+            embed = discord.Embed(title="通話終了", color=0x89c9ff)
             embed.set_thumbnail(url=member.avatar.url)
-            embed.add_field(name="チャンネル", value=before.channel.name)
-            embed.add_field(name="通話時間", value=duration_str)  # 計算した通話時間を表示
-            embed.set_footer(text=f"終了時間: {end_time.strftime('%Y/%m/%d %H:%M:%S UTC')}")
+            embed.add_field(name="チャンネル", value=f"`{before.channel.name}`")
+            embed.add_field(name="通話時間", value=f"`{duration_str}`")
 
             # サーバーごとに設定された通知チャンネルにメッセージを送信
             guild_id = member.guild.id
