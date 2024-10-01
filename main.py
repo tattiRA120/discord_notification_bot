@@ -59,12 +59,12 @@ async def on_voice_state_update(member, before, after):
             if guild_id in server_notification_channels:
                 notification_channel = bot.get_channel(server_notification_channels[guild_id])
                 if notification_channel:
-                    # @everyone を含むメッセージを送信
+                    # @everyone と embed を一緒に送信
                     await notification_channel.send(
-                        content="@everyone",
+                        content="@everyone", 
+                        embed=embed,
                         allowed_mentions=discord.AllowedMentions(everyone=True)
                     )
-                    await notification_channel.send(embed=embed)
 
     # 通話終了：最後に通話から抜けた人に通知
     elif before.channel is not None and after.channel is None:
