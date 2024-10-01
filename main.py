@@ -31,11 +31,11 @@ async def on_voice_state_update(member, before, after):
         start_time = datetime.datetime.utcnow()  # 現在時刻をUTCで取得
         call_start_times[member.id] = start_time  # ユーザーIDをキーにして開始時間を記録
 
-        embed = discord.Embed(title="通話開始", color=0xffa5a5)
+        embed = discord.Embed(title="通話開始", color=0xea958f)
         embed.set_thumbnail(url=member.avatar.url)
-        embed.add_field(name="チャンネル", value=f"`{after.channel.name}`")
-        embed.add_field(name="始めた人", value=f"`{member.display_name}`")
-        embed.add_field(name="開始時間", value=f"`{start_time.strftime('%Y/%m/%d %H:%M:%S UTC')}`")
+        embed.add_field(name="`チャンネル`", value=f"{after.channel.name}")
+        embed.add_field(name="`始めた人`", value=f"{member.display_name}")
+        embed.add_field(name="`開始時間`", value=f"{start_time.strftime('%Y/%m/%d %H:%M:%S UTC')}")
 
         # サーバーごとに設定された通知チャンネルにメッセージを送信
         guild_id = member.guild.id
@@ -54,10 +54,10 @@ async def on_voice_state_update(member, before, after):
             minutes, seconds = divmod(remainder, 60)
             duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
 
-            embed = discord.Embed(title="通話終了", color=0x89c9ff)
+            embed = discord.Embed(title="`通話終了`", color=0x938dfd)
             embed.set_thumbnail(url=member.avatar.url)
-            embed.add_field(name="チャンネル", value=f"`{before.channel.name}`")
-            embed.add_field(name="通話時間", value=f"`{duration_str}`")
+            embed.add_field(name="`チャンネル`", value=f"{before.channel.name}")
+            embed.add_field(name="`通話時間`", value=f"{duration_str}")
 
             # サーバーごとに設定された通知チャンネルにメッセージを送信
             guild_id = member.guild.id
