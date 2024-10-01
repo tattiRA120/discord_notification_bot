@@ -14,6 +14,7 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 intents = discord.Intents.default()
 intents.voice_states = True  # ボイスチャンネルの変更イベントを有効にする
 intents.members = True  # メンバー情報の取得を許可する
+intents.message_content = True  # メッセージ内容のアクセスを許可
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -21,6 +22,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 server_notification_channels = {}
 
 # 通話開始時間と最初に通話を開始した人を記録する辞書
+# サーバーごとの音声チャンネルごとに辞書を分ける
 call_sessions = {}
 
 # UTCからJSTに変換する関数
@@ -32,11 +34,17 @@ def convert_utc_to_jst(utc_time):
 @bot.event
 async def on_voice_state_update(member, before, after):
     guild_id = member.guild.id
+    
     # 通話開始：最初に通話に入った人に通知
     if before.channel is None and after.channel is not None:
+        voice_channel_id = after.channel.id  # 音声チャンネルごとに管理するためのID
+        
         if guild_id not in call_sessions:
+            call_sessions[guild_id] = {}  # サーバーごとに音声チャンネル辞書を初期化
+
+        if voice_channel_id not in call_sessions[guild_id]:
             start_time = datetime.datetime.utcnow()  # 現在時刻をUTCで取得
-            call_sessions[guild_id] = {"start_time": start_time, "first_member": member.id}
+            call_sessions[guild_id][voice_channel_id] = {"start_time": start_time, "first_member": member.id}
 
             jst_time = convert_utc_to_jst(start_time)  # JSTに変換
 
@@ -54,25 +62,28 @@ async def on_voice_state_update(member, before, after):
 
     # 通話終了：最後に通話から抜けた人に通知
     elif before.channel is not None and after.channel is None:
-        voice_channel = before.channel
-        if len(voice_channel.members) == 0 and guild_id in call_sessions:
-            session = call_sessions.pop(guild_id)
-            start_time = session["start_time"]
-            call_duration = datetime.datetime.utcnow() - start_time  # 通話時間を計算
-            hours, remainder = divmod(call_duration.total_seconds(), 3600)
-            minutes, seconds = divmod(remainder, 60)
-            duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+        voice_channel_id = before.channel.id  # 音声チャンネルごとに管理するためのID
+        
+        if guild_id in call_sessions and voice_channel_id in call_sessions[guild_id]:
+            voice_channel = before.channel
+            if len(voice_channel.members) == 0:
+                session = call_sessions[guild_id].pop(voice_channel_id)
+                start_time = session["start_time"]
+                call_duration = datetime.datetime.utcnow() - start_time  # 通話時間を計算
+                hours, remainder = divmod(call_duration.total_seconds(), 3600)
+                minutes, seconds = divmod(remainder, 60)
+                duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
 
-            embed = discord.Embed(title="通話終了", color=0x938dfd)
-            embed.add_field(name="`チャンネル`", value=f"{voice_channel.name}")
-            embed.add_field(name="`通話時間`", value=f"{duration_str}")
-            # 「通話終了」の際はアイコンを表示しないため、set_thumbnailは使用しない
+                embed = discord.Embed(title="通話終了", color=0x938dfd)
+                embed.add_field(name="`チャンネル`", value=f"{voice_channel.name}")
+                embed.add_field(name="`通話時間`", value=f"{duration_str}")
+                # 「通話終了」の際はアイコンを表示しないため、set_thumbnailは使用しない
 
-            # サーバーごとに設定された通知チャンネルにメッセージを送信
-            if guild_id in server_notification_channels:
-                notification_channel = bot.get_channel(server_notification_channels[guild_id])
-                if notification_channel:
-                    await notification_channel.send(embed=embed)
+                # サーバーごとに設定された通知チャンネルにメッセージを送信
+                if guild_id in server_notification_channels:
+                    notification_channel = bot.get_channel(server_notification_channels[guild_id])
+                    if notification_channel:
+                        await notification_channel.send(embed=embed)
 
 # 通知先チャンネルを変更するためのスラッシュコマンド
 @bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
