@@ -1,8 +1,9 @@
-import discord 
+import discord
 from discord import app_commands
 from discord.ext import commands
 import datetime
 import os
+import json  # 追加
 from zoneinfo import ZoneInfo  # 追加
 from dotenv import load_dotenv
 
@@ -23,8 +24,22 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 server_notification_channels = {}
 
 # 通話開始時間と最初に通話を開始した人を記録する辞書
-# サーバーごとの音声チャンネルごとに辞書を分ける
 call_sessions = {}
+
+# 通知チャンネル設定を保存するファイルのパス
+CHANNELS_FILE = "channels.json"
+
+# 通知チャンネル設定をファイルに保存する関数
+def save_channels_to_file():
+    with open(CHANNELS_FILE, "w") as f:
+        json.dump(server_notification_channels, f)
+
+# 通知チャンネル設定をファイルから読み込む関数
+def load_channels_from_file():
+    global server_notification_channels
+    if os.path.exists(CHANNELS_FILE):
+        with open(CHANNELS_FILE, "r") as f:
+            server_notification_channels = json.load(f)
 
 # UTCからJSTに変換する関数 (astimezone方式に変更)
 def convert_utc_to_jst(utc_time):
@@ -35,11 +50,11 @@ def convert_utc_to_jst(utc_time):
 @bot.event
 async def on_voice_state_update(member, before, after):
     guild_id = member.guild.id
-    
-    # 通話開始：最初に通話に入った人に通知
+
+    # 通話開始：誰もいない通話チャンネルに入ったら通知
     if before.channel is None and after.channel is not None:
         voice_channel_id = after.channel.id  # 音声チャンネルごとに管理するためのID
-        
+
         if guild_id not in call_sessions:
             call_sessions[guild_id] = {}  # サーバーごとに音声チャンネル辞書を初期化
 
@@ -50,7 +65,7 @@ async def on_voice_state_update(member, before, after):
             jst_time = convert_utc_to_jst(start_time)  # JSTに変換
 
             embed = discord.Embed(title="通話開始", color=0xea958f)
-            embed.set_thumbnail(url=member.avatar.url)  # ユーザーアイコンを表示
+            embed.set_thumbnail(url=f"{member.avatar.url}?size=128")  # ユーザーアイコンを表示
             embed.add_field(name="`チャンネル`", value=f"{after.channel.name}")
             embed.add_field(name="`始めた人`", value=f"{member.display_name}")
             embed.add_field(name="`開始時間`", value=f"{jst_time.strftime('%Y/%m/%d %H:%M:%S')}")  # JST表記
@@ -61,15 +76,15 @@ async def on_voice_state_update(member, before, after):
                 if notification_channel:
                     # @everyone と embed を一緒に送信
                     await notification_channel.send(
-                        content="@everyone", 
+                        content="@everyone",
                         embed=embed,
                         allowed_mentions=discord.AllowedMentions(everyone=True)
                     )
 
-    # 通話終了：最後に通話から抜けた人に通知
+    # 通話終了：通話チャンネルから全員抜けたら通知
     elif before.channel is not None and after.channel is None:
         voice_channel_id = before.channel.id  # 音声チャンネルごとに管理するためのID
-        
+
         if guild_id in call_sessions and voice_channel_id in call_sessions[guild_id]:
             voice_channel = before.channel
             if len(voice_channel.members) == 0:
@@ -97,11 +112,13 @@ async def on_voice_state_update(member, before, after):
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
     # 通知先チャンネルを変更
     server_notification_channels[interaction.guild.id] = channel.id
+    save_channels_to_file()  # チャンネル設定を保存
     await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
 
-# Botの起動時にスラッシュコマンドを同期する
+# Botの起動時にスラッシュコマンドを同期し、通知チャンネル設定をロードする
 @bot.event
 async def on_ready():
+    load_channels_from_file()  # 通知チャンネル設定をロード
     await bot.tree.sync()  # スラッシュコマンドを同期
     print(f"Logged in as {bot.user.name}")
 
