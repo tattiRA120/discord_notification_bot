@@ -3,8 +3,8 @@ from discord import app_commands
 from discord.ext import commands
 import datetime
 import os
-import json  # 追加
-from zoneinfo import ZoneInfo  # 追加
+import json
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
 # .envファイルの環境変数を読み込む
@@ -110,10 +110,17 @@ async def on_voice_state_update(member, before, after):
 @bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
-    # 通知先チャンネルを変更
-    server_notification_channels[interaction.guild.id] = channel.id
-    save_channels_to_file()  # チャンネル設定を保存
-    await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
+    guild_id = interaction.guild.id
+
+    # 既に設定されているチャンネルと同じ場合は保存せずに通知
+    if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
+        current_channel = bot.get_channel(server_notification_channels[guild_id])
+        await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。")
+    else:
+        # 通知先チャンネルを変更
+        server_notification_channels[guild_id] = channel.id
+        save_channels_to_file()  # チャンネル設定を保存
+        await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
 
 # Botの起動時にスラッシュコマンドを同期し、通知チャンネル設定をロードする
 @bot.event
