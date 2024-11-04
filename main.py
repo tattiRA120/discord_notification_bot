@@ -40,6 +40,8 @@ def load_channels_from_file():
     if os.path.exists(CHANNELS_FILE):
         with open(CHANNELS_FILE, "r") as f:
             server_notification_channels = json.load(f)
+    # 重複するキーが存在しないようにする
+    server_notification_channels = {str(guild_id): channel_id for guild_id, channel_id in server_notification_channels.items()}
 
 # UTCからJSTに変換する関数 (astimezone方式に変更)
 def convert_utc_to_jst(utc_time):
@@ -71,8 +73,8 @@ async def on_voice_state_update(member, before, after):
             embed.add_field(name="`開始時間`", value=f"{jst_time.strftime('%Y/%m/%d %H:%M:%S')}")  # JST表記
 
             # サーバーごとに設定された通知チャンネルにメッセージを送信
-            if guild_id in server_notification_channels:
-                notification_channel = bot.get_channel(server_notification_channels[guild_id])
+            if str(guild_id) in server_notification_channels:
+                notification_channel = bot.get_channel(server_notification_channels[str(guild_id)])
                 if notification_channel:
                     # @everyone と embed を一緒に送信
                     await notification_channel.send(
@@ -80,6 +82,8 @@ async def on_voice_state_update(member, before, after):
                         embed=embed,
                         allowed_mentions=discord.AllowedMentions(everyone=True)
                     )
+                else:
+                    print(f"通知チャンネルが見つかりません: ギルドID {guild_id}, チャンネルID {server_notification_channels[str(guild_id)]}")
 
     # 通話終了：通話チャンネルから全員抜けたら通知
     elif before.channel is not None and after.channel is None:
@@ -101,16 +105,18 @@ async def on_voice_state_update(member, before, after):
                 # 「通話終了」の際はアイコンを表示しないため、set_thumbnailは使用しない
 
                 # サーバーごとに設定された通知チャンネルにメッセージを送信
-                if guild_id in server_notification_channels:
-                    notification_channel = bot.get_channel(server_notification_channels[guild_id])
+                if str(guild_id) in server_notification_channels:
+                    notification_channel = bot.get_channel(server_notification_channels[str(guild_id)])
                     if notification_channel:
                         await notification_channel.send(embed=embed)
+                    else:
+                        print(f"通知チャンネルが見つかりません: ギルドID {guild_id}, チャンネルID {server_notification_channels[str(guild_id)]}")
 
 # 通知先チャンネルを変更するためのスラッシュコマンド
 @bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
-    guild_id = interaction.guild.id
+    guild_id = str(interaction.guild.id)
 
     # 既に設定されているチャンネルと同じ場合は保存せずに通知
     if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
@@ -128,6 +134,7 @@ async def on_ready():
     load_channels_from_file()  # 通知チャンネル設定をロード
     await bot.tree.sync()  # スラッシュコマンドを同期
     print(f"Logged in as {bot.user.name}")
+    print("現在の通知チャンネル設定:", server_notification_channels)
 
 # Botを実行
 bot.run(TOKEN)
