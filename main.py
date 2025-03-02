@@ -20,7 +20,6 @@ intents.message_content = True  # メッセージ内容のアクセスを許可
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# --- 既存機能 ---
 # サーバーごとの通知先チャンネルIDを保存する辞書
 server_notification_channels = {}
 
@@ -59,7 +58,13 @@ def load_channels_from_file():
 def convert_utc_to_jst(utc_time):
     return utc_time.astimezone(ZoneInfo("Asia/Tokyo"))
 
-# --- 新機能用グローバル変数 ---
+def format_duration(duration_seconds):
+    """秒数を '00:00:00' 表記に変換"""
+    seconds = int(duration_seconds)
+    hours, remainder = divmod(seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
 # (guild_id, channel_id) をキーに、現在進行中の「2人以上通話セッション」を記録する
 active_voice_sessions = {}  # {(guild_id, channel_id): {"start_time": datetime, "participants": [member_id, ...]}}
 
@@ -139,9 +144,7 @@ async def on_voice_state_update(member, before, after):
                 session = call_sessions[guild_id].pop(voice_channel_id)
                 start_time = session["start_time"]
                 call_duration = (now - start_time).total_seconds()
-                hours, remainder = divmod(call_duration, 3600)
-                minutes, seconds = divmod(remainder, 60)
-                duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+                duration_str = format_duration(call_duration)
                 embed = discord.Embed(title="通話終了", color=0x938dfd)
                 embed.add_field(name="チャンネル", value=f"{voice_channel.name}")
                 embed.add_field(name="通話時間", value=f"{duration_str}")
@@ -155,7 +158,7 @@ async def on_voice_state_update(member, before, after):
                     m_id = m.id
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + call_duration
 
-    # --- 新機能: 二人以上通話状態の記録 ---
+    # --- 二人以上通話状態の記録 ---
     # 判定対象は、現在いるチャンネルが「二人以上」になっているかどうかです。
     if after.channel is not None:
         vc = after.channel
@@ -209,21 +212,21 @@ async def call_stats(interaction: discord.Interaction):
                 longest_participants_names.append(m_obj.display_name)
             else:
                 longest_participants_names.append(str(mid))
-        longest_info = f"{longest_duration/3600:.2f} 時間（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
+        longest_info = f"{format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
     else:
         longest_info = "なし"
 
-    # メンバー別ランキング（累計時間）
+    # メンバー別ランキング（累計時間） ※順位と表示形式の微調整
     sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
     ranking_lines = []
-    for member_id, duration in sorted_members:
+    for i, (member_id, duration) in enumerate(sorted_members, start=1):
         m_obj = interaction.guild.get_member(int(member_id))
         name = m_obj.display_name if m_obj else str(member_id)
-        ranking_lines.append(f"{name}: {duration/3600:.2f} 時間")
+        ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
     embed = discord.Embed(title="【月間】通話統計情報", color=0x00ff00)
-    embed.add_field(name="平均通話時間", value=f"{monthly_avg/3600:.2f} 時間", inline=False)
+    embed.add_field(name="平均通話時間", value=f"{format_duration(monthly_avg)}", inline=False)
     embed.add_field(name="最長通話", value=longest_info, inline=False)
     embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
 
