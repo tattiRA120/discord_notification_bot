@@ -23,10 +23,10 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # サーバーごとの通知先チャンネルIDを保存する辞書
 server_notification_channels = {}
 
-# 通話開始時間と最初に通話を開始した人を記録する辞書（既存の通話通知用）
+# 通話開始時間と最初に通話を開始した人を記録する辞書（通話通知用）
 call_sessions = {}
 
-# 各メンバーの通話時間を記録する辞書（既存の通話通知用）
+# 各メンバーの通話時間を記録する辞書（通話通知用）
 member_call_times = {}
 
 # 通知チャンネル設定を保存するファイルのパス
@@ -116,7 +116,7 @@ async def on_voice_state_update(member, before, after):
     guild_id = member.guild.id
     now = datetime.datetime.now(datetime.timezone.utc)
 
-    # 既存の通話通知機能（影響を与えないようそのまま残す）
+    # 通話通知機能
     if before.channel is None and after.channel is not None:
         voice_channel_id = after.channel.id
         if guild_id not in call_sessions:
@@ -184,7 +184,7 @@ async def on_voice_state_update(member, before, after):
                 record_voice_session(session["start_time"], session_duration, session["participants"])
 
 # --- /call_stats コマンド ---
-@bot.tree.command(name="call_stats", description="月間の2人以上通話時間の統計情報を表示します")
+@bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
 async def call_stats(interaction: discord.Interaction):
     now = datetime.datetime.now(datetime.timezone.utc)
     current_month = now.strftime("%Y-%m")
