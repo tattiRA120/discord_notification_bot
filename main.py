@@ -15,160 +15,245 @@ TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
 intents = discord.Intents.default()
 intents.voice_states = True  # ボイスチャンネルの変更イベントを有効にする
-intents.members = True  # メンバー情報の取得を許可する
+intents.members = True       # メンバー情報の取得を許可する
 intents.message_content = True  # メッセージ内容のアクセスを許可
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+# --- 既存機能 ---
 # サーバーごとの通知先チャンネルIDを保存する辞書
 server_notification_channels = {}
 
-# 通話開始時間と最初に通話を開始した人を記録する辞書
+# 通話開始時間と最初に通話を開始した人を記録する辞書（既存の通話通知用）
 call_sessions = {}
 
-# 各メンバーの通話時間を記録する辞書
+# 各メンバーの通話時間を記録する辞書（既存の通話通知用）
 member_call_times = {}
 
 # 通知チャンネル設定を保存するファイルのパス
 CHANNELS_FILE = "channels.json"
 
-# 通知チャンネル設定をファイルに保存する関数
 def save_channels_to_file():
     with open(CHANNELS_FILE, "w") as f:
         json.dump(server_notification_channels, f)
 
-# 通知チャンネル設定をファイルから読み込む関数
 def load_channels_from_file():
     global server_notification_channels
     if os.path.exists(CHANNELS_FILE):
         with open(CHANNELS_FILE, "r") as f:
             try:
-                # ファイルが空でないか確認
                 content = f.read().strip()
                 if content:
                     server_notification_channels = json.loads(content)
                 else:
-                    server_notification_channels = {}  # ファイルが空なら初期化
+                    server_notification_channels = {}
             except json.JSONDecodeError:
-                print(f"エラー: {CHANNELS_FILE} の読み込みに失敗しました。空のファイルまたは不正な形式です。")
-                server_notification_channels = {}  # エラーが発生した場合は空の辞書で初期化
+                print(f"エラー: {CHANNELS_FILE} の読み込みに失敗しました。")
+                server_notification_channels = {}
     else:
-        server_notification_channels = {}  # ファイルが存在しない場合も空の辞書で初期化
+        server_notification_channels = {}
 
-    # 重複するキーが存在しないようにする
+    # キーを文字列に統一
     server_notification_channels = {str(guild_id): channel_id for guild_id, channel_id in server_notification_channels.items()}
 
-# UTCからJSTに変換する関数 (astimezone方式に変更)
 def convert_utc_to_jst(utc_time):
-    jst_time = utc_time.astimezone(ZoneInfo("Asia/Tokyo"))  # JSTに変換
-    return jst_time
+    return utc_time.astimezone(ZoneInfo("Asia/Tokyo"))
 
-# 通話開始・終了時に通知するためのイベント
+# --- 新機能用グローバル変数 ---
+# (guild_id, channel_id) をキーに、現在進行中の「2人以上通話セッション」を記録する
+active_voice_sessions = {}  # {(guild_id, channel_id): {"start_time": datetime, "participants": [member_id, ...]}}
+
+# 月間の通話統計を記録するファイル
+VOICE_STATS_FILE = "voice_stats.json"
+voice_stats = {}  # 例: { "2025-03": { "sessions": [ {"start_time": ISO, "duration": 秒, "participants": [member_id,...] }, ... ], "members": { member_id: 累計秒数, ... } } }
+
+def load_voice_stats():
+    global voice_stats
+    if os.path.exists(VOICE_STATS_FILE):
+        with open(VOICE_STATS_FILE, "r") as f:
+            try:
+                content = f.read().strip()
+                if content:
+                    voice_stats = json.loads(content)
+                else:
+                    voice_stats = {}
+            except json.JSONDecodeError:
+                print(f"エラー: {VOICE_STATS_FILE} の読み込みに失敗しました。")
+                voice_stats = {}
+    else:
+        voice_stats = {}
+
+def save_voice_stats():
+    with open(VOICE_STATS_FILE, "w") as f:
+        json.dump(voice_stats, f, indent=2)
+
+def record_voice_session(session_start, session_duration, participants):
+    """
+    session_start: datetime (UTC) セッション開始時刻
+    session_duration: 秒数
+    participants: list of member IDs (int)
+    """
+    month_key = session_start.strftime("%Y-%m")  # 例: "2025-03"
+    if month_key not in voice_stats:
+        voice_stats[month_key] = {"sessions": [], "members": {}}
+    voice_stats[month_key]["sessions"].append({
+        "start_time": session_start.isoformat(),
+        "duration": session_duration,
+        "participants": participants
+    })
+    for m in participants:
+        voice_stats[month_key]["members"][str(m)] = voice_stats[month_key]["members"].get(str(m), 0) + session_duration
+    save_voice_stats()
+
+# --- イベントハンドラ ---
 @bot.event
 async def on_voice_state_update(member, before, after):
     guild_id = member.guild.id
+    now = datetime.datetime.now(datetime.timezone.utc)
 
-    # 通話開始：誰もいない通話チャンネルに入ったら通知
+    # 既存の通話通知機能（影響を与えないようそのまま残す）
     if before.channel is None and after.channel is not None:
-        voice_channel_id = after.channel.id  # 音声チャンネルごとに管理するためのID
-
+        voice_channel_id = after.channel.id
         if guild_id not in call_sessions:
-            call_sessions[guild_id] = {}  # サーバーごとに音声チャンネル辞書を初期化
-
+            call_sessions[guild_id] = {}
         if voice_channel_id not in call_sessions[guild_id]:
-            start_time = datetime.datetime.now(datetime.timezone.utc)  # 現在時刻をUTCで取得
+            start_time = now
             call_sessions[guild_id][voice_channel_id] = {"start_time": start_time, "first_member": member.id}
-
-    # 通話終了：通話チャンネルから全員抜けたら通知
+            jst_time = convert_utc_to_jst(start_time)
+            embed = discord.Embed(title="通話開始", color=0xea958f)
+            embed.set_thumbnail(url=f"{member.avatar.url}?size=128")
+            embed.add_field(name="チャンネル", value=f"{after.channel.name}")
+            embed.add_field(name="始めた人", value=f"{member.display_name}")
+            embed.add_field(name="開始時間", value=f"{jst_time.strftime('%Y/%m/%d %H:%M:%S')}")
+            if str(guild_id) in server_notification_channels:
+                notification_channel = bot.get_channel(server_notification_channels[str(guild_id)])
+                if notification_channel:
+                    await notification_channel.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
+                else:
+                    print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
     elif before.channel is not None and after.channel is None:
-        voice_channel_id = before.channel.id  # 音声チャンネルごとに管理するためのID
-
+        voice_channel_id = before.channel.id
         if guild_id in call_sessions and voice_channel_id in call_sessions[guild_id]:
             voice_channel = before.channel
             if len(voice_channel.members) == 0:
                 session = call_sessions[guild_id].pop(voice_channel_id)
                 start_time = session["start_time"]
-                call_duration = datetime.datetime.now(datetime.timezone.utc) - start_time  # 通話時間を計算
+                call_duration = (now - start_time).total_seconds()
+                hours, remainder = divmod(call_duration, 3600)
+                minutes, seconds = divmod(remainder, 60)
+                duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+                embed = discord.Embed(title="通話終了", color=0x938dfd)
+                embed.add_field(name="チャンネル", value=f"{voice_channel.name}")
+                embed.add_field(name="通話時間", value=f"{duration_str}")
+                if str(guild_id) in server_notification_channels:
+                    notification_channel = bot.get_channel(server_notification_channels[str(guild_id)])
+                    if notification_channel:
+                        await notification_channel.send(embed=embed)
+                    else:
+                        print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
+                for m in voice_channel.members:
+                    m_id = m.id
+                    member_call_times[m_id] = member_call_times.get(m_id, 0) + call_duration
 
-                # 通話時間をメンバーごとに記録
-                for member in voice_channel.members:
-                    member_id = member.id
-                    duration_seconds = call_duration.total_seconds()
+    # --- 新機能: 二人以上通話状態の記録 ---
+    # 判定対象は、現在いるチャンネルが「二人以上」になっているかどうかです。
+    if after.channel is not None:
+        vc = after.channel
+        key = (guild_id, vc.id)
+        if len(vc.members) >= 2:
+            # セッションが開始されていなければ開始
+            if key not in active_voice_sessions:
+                active_voice_sessions[key] = {"start_time": now, "participants": [m.id for m in vc.members]}
+        else:
+            # activeなセッションがあれば終了
+            if key in active_voice_sessions:
+                session = active_voice_sessions.pop(key)
+                session_duration = (now - session["start_time"]).total_seconds()
+                if session_duration > 0:
+                    record_voice_session(session["start_time"], session_duration, session["participants"])
+    if before.channel is not None:
+        vc = before.channel
+        key = (guild_id, vc.id)
+        if key in active_voice_sessions and len(vc.members) < 2:
+            session = active_voice_sessions.pop(key)
+            session_duration = (now - session["start_time"]).total_seconds()
+            if session_duration > 0:
+                record_voice_session(session["start_time"], session_duration, session["participants"])
 
-                    if member_id not in member_call_times:
-                        member_call_times[member_id] = 0
-                    member_call_times[member_id] += duration_seconds
-
-# 通話統計情報を表示するスラッシュコマンド
-@bot.tree.command(name="call_stats", description="通話統計情報を表示します")
+# --- /call_stats コマンド ---
+@bot.tree.command(name="call_stats", description="月間の2人以上通話時間の統計情報を表示します")
 async def call_stats(interaction: discord.Interaction):
-    guild_id = str(interaction.guild.id)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    current_month = now.strftime("%Y-%m")
+    load_voice_stats()
+    monthly_data = voice_stats.get(current_month, {"sessions": [], "members": {}})
+    sessions = monthly_data["sessions"]
+    member_stats = monthly_data["members"]
 
-    # 平均通話時間、最長通話時間を計算
-    total_call_duration = 0
-    longest_call_duration = 0
-    longest_call_date = ""
-    call_count = 0
-
-    for session in call_sessions.get(guild_id, {}).values():
-        start_time = session["start_time"]
-        end_time = datetime.datetime.now(datetime.timezone.utc)
-        call_duration = end_time - start_time
-
-        total_call_duration += call_duration.total_seconds()
-        call_count += 1
-
-        if call_duration.total_seconds() > longest_call_duration:
-            longest_call_duration = call_duration.total_seconds()
-            longest_call_date = convert_utc_to_jst(start_time).strftime('%Y/%m/%d')
-
-    if call_count > 0:
-        avg_call_duration = total_call_duration / call_count
+    # 月間平均（セッションごとの平均時間）
+    if sessions:
+        monthly_avg = sum(sess["duration"] for sess in sessions) / len(sessions)
     else:
-        avg_call_duration = 0
+        monthly_avg = 0
 
-    # 通話時間ランキング
-    sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
+    # 月間最長セッション
+    if sessions:
+        longest_session = max(sessions, key=lambda s: s["duration"])
+        longest_duration = longest_session["duration"]
+        longest_date = convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
+        longest_participants = longest_session["participants"]
+        longest_participants_names = []
+        for mid in longest_participants:
+            m_obj = interaction.guild.get_member(mid)
+            if m_obj:
+                longest_participants_names.append(m_obj.display_name)
+            else:
+                longest_participants_names.append(str(mid))
+        longest_info = f"{longest_duration/3600:.2f} 時間（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
+    else:
+        longest_info = "なし"
 
-    # 結果を表示
-    embed = discord.Embed(title="通話統計情報", color=0x00ff00)
-    embed.add_field(name="平均通話時間", value=f"{avg_call_duration / 3600:.2f} 時間")
-    embed.add_field(name="最長通話時間", value=f"{longest_call_duration / 3600:.2f} 時間")
-    embed.add_field(name="最長通話日付", value=longest_call_date)
+    # メンバー別ランキング（累計時間）
+    sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
+    ranking_lines = []
+    for member_id, duration in sorted_members:
+        m_obj = interaction.guild.get_member(int(member_id))
+        name = m_obj.display_name if m_obj else str(member_id)
+        ranking_lines.append(f"{name}: {duration/3600:.2f} 時間")
+    ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
-    embed.add_field(name="通話時間ランキング", value="\n".join([f"{interaction.guild.get_member(member_id).display_name}: {duration / 3600:.2f} 時間" for member_id, duration in sorted_members[:5]]), inline=False)
+    embed = discord.Embed(title="【月間】通話統計情報", color=0x00ff00)
+    embed.add_field(name="平均通話時間", value=f"{monthly_avg/3600:.2f} 時間", inline=False)
+    embed.add_field(name="最長通話", value=longest_info, inline=False)
+    embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
 
     await interaction.response.send_message(embed=embed)
 
-# 通知先チャンネルを変更するためのスラッシュコマンド
+# --- 通知先チャンネル変更コマンド ---
 @bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
     guild_id = str(interaction.guild.id)
-
-    # 既に設定されているチャンネルと同じ場合は保存せずに通知
     if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
         current_channel = bot.get_channel(server_notification_channels[guild_id])
         await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。")
     else:
-        # 通知先チャンネルを変更
         server_notification_channels[guild_id] = channel.id
-        save_channels_to_file()  # チャンネル設定を保存
+        save_channels_to_file()
         await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
 
-# Botの起動時にスラッシュコマンドを同期し、通知チャンネル設定をロードする
+# --- 起動時処理 ---
 @bot.event
 async def on_ready():
-    load_channels_from_file()  # 通知チャンネル設定をロード
+    load_channels_from_file()
+    load_voice_stats()
     try:
-        await bot.tree.sync()  # スラッシュコマンドを同期
+        await bot.tree.sync()
         print("スラッシュコマンドが正常に同期されました。")
     except Exception as e:
         print(f"スラッシュコマンドの同期に失敗しました: {e}")
-    
     print(f"Logged in as {bot.user.name}")
     print("現在の通知チャンネル設定:", server_notification_channels)
 
-# Botを実行
 bot.run(TOKEN)
 
