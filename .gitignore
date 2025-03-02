@@ -5,4 +5,5 @@ lib
 lib64
 pyvenv.cfg
 channels.json
+voice_stats.json
 venv/
