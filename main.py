@@ -160,7 +160,12 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
 @bot.event
 async def on_ready():
     load_channels_from_file()  # 通知チャンネル設定をロード
-    await bot.tree.sync()  # スラッシュコマンドを同期
+    try:
+        await bot.tree.sync()  # スラッシュコマンドを同期
+        print("スラッシュコマンドが正常に同期されました。")
+    except Exception as e:
+        print(f"スラッシュコマンドの同期に失敗しました: {e}")
+    
     print(f"Logged in as {bot.user.name}")
     print("現在の通知チャンネル設定:", server_notification_channels)
 
