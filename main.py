@@ -250,7 +250,8 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
     embed.add_field(name="最長通話", value=longest_info, inline=False)
     embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
 
-    await interaction.response.send_message(embed=embed)
+    # 送信時に ephemeral=True を指定して送信者のみ表示
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- 通知先チャンネル変更コマンド ---
 @bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
