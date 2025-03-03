@@ -229,11 +229,7 @@ async def call_stats(interaction: discord.Interaction):
         ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
-    embed = discord.Embed(
-        title="【月間】通話統計情報",
-        description=f"{month_display}の通話統計",
-        color=0x00ff00
-    )
+    embed = discord.Embed(title=f"【{month_display}】通話統計情報", color=0x00ff00)
     embed.add_field(name="平均通話時間", value=f"{format_duration(monthly_avg)}", inline=False)
     embed.add_field(name="最長通話", value=longest_info, inline=False)
     embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
