@@ -188,6 +188,10 @@ async def on_voice_state_update(member, before, after):
 async def call_stats(interaction: discord.Interaction):
     now = datetime.datetime.now(datetime.timezone.utc)
     current_month = now.strftime("%Y-%m")
+    # current_month を「YYYY年MM月」形式に変換
+    year, month = current_month.split("-")
+    month_display = f"{year}年{month}月"
+    
     load_voice_stats()
     monthly_data = voice_stats.get(current_month, {"sessions": [], "members": {}})
     sessions = monthly_data["sessions"]
@@ -216,7 +220,7 @@ async def call_stats(interaction: discord.Interaction):
     else:
         longest_info = "なし"
 
-    # メンバー別ランキング（累計時間） ※順位と表示形式の微調整
+    # メンバー別ランキング（累計時間）
     sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
     ranking_lines = []
     for i, (member_id, duration) in enumerate(sorted_members, start=1):
@@ -225,7 +229,11 @@ async def call_stats(interaction: discord.Interaction):
         ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
-    embed = discord.Embed(title="【月間】通話統計情報", description="0000年00月の通話統計", color=0x00ff00)
+    embed = discord.Embed(
+        title="【月間】通話統計情報",
+        description=f"{month_display}の通話統計",
+        color=0x00ff00
+    )
     embed.add_field(name="平均通話時間", value=f"{format_duration(monthly_avg)}", inline=False)
     embed.add_field(name="最長通話", value=longest_info, inline=False)
     embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
