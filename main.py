@@ -185,14 +185,30 @@ async def on_voice_state_update(member, before, after):
 
 # --- /call_stats コマンド ---
 @bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
-async def call_stats(interaction: discord.Interaction):
-    now = datetime.datetime.now(datetime.timezone.utc)
-    current_month = now.strftime("%Y-%m")
+@app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
+async def call_stats(interaction: discord.Interaction, month: str = None):
+    # 指定がなければ現在の月を使用
+    if month is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+        current_month = now.strftime("%Y-%m")
+    else:
+        current_month = month
+
     # current_month を「YYYY年MM月」形式に変換
-    year, month = current_month.split("-")
-    month_display = f"{year}年{month}月"
-    
+    try:
+        year, mon = current_month.split("-")
+        month_display = f"{year}年{mon}月"
+    except Exception as e:
+        await interaction.response.send_message("指定された月の形式が正しくありません。形式は YYYY-MM で指定してください。", ephemeral=True)
+        return
+
     load_voice_stats()
+
+    # 統計情報が存在しない場合
+    if current_month not in voice_stats:
+        await interaction.response.send_message(f"{month_display}は通話統計情報が記録されていません", ephemeral=True)
+        return
+
     monthly_data = voice_stats.get(current_month, {"sessions": [], "members": {}})
     sessions = monthly_data["sessions"]
     member_stats = monthly_data["members"]
