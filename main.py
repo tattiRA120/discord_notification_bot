@@ -1,6 +1,6 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import datetime
 import os
 import json
@@ -264,6 +264,29 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
         server_notification_channels[guild_id] = channel.id
         save_channels_to_file()
         await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
+
+# --- 毎月1日20時に前月の統計情報を送信するタスク ---
+@tasks.loop(time=datetime.time(hour=20, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
+async def scheduled_previous_month_stats():
+    now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+    # JSTで毎日20:00に実行されるが、日付が1日の場合のみ処理する
+    if now.day == 1:
+        # 前月を算出（例：2025年03月1日20時 → 前月は2025-02）
+        first_day_current = now.replace(day=1)
+        prev_month_last_day = first_day_current - datetime.timedelta(days=1)
+        previous_month = prev_month_last_day.strftime("%Y-%m")
+        
+        load_voice_stats()  # 最新の統計情報をロード
+
+        for guild_id, channel_id in server_notification_channels.items():
+            guild = bot.get_guild(int(guild_id))
+            channel = bot.get_channel(channel_id)
+            if guild and channel:
+                embed, month_display = create_monthly_stats_embed(guild, previous_month)
+                if embed:
+                    await channel.send(embed=embed)
+                else:
+                    await channel.send(f"{month_display}は通話統計情報が記録されていません")
 
 # --- 起動時処理 ---
 @bot.event
