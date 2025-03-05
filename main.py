@@ -158,9 +158,9 @@ def create_annual_stats_embed(guild, year: str):
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
     embed = discord.Embed(title=f"【{year_display}】年間通話統計情報", color=0x00ff00)
-    embed.add_field(name="年間：平均通話時間", value=f"{format_duration(avg_duration)}", inline=False)
-    embed.add_field(name="年間：最長通話", value=longest_info, inline=False)
-    embed.add_field(name="年間：通話時間ランキング", value=ranking_text, inline=False)
+    embed.add_field(name="年間: 平均通話時間", value=f"{format_duration(avg_duration)}", inline=False)
+    embed.add_field(name="年間: 最長通話", value=longest_info, inline=False)
+    embed.add_field(name="年間: 通話時間ランキング", value=ranking_text, inline=False)
     return embed, year_display
 
 # --- イベントハンドラ ---
@@ -178,7 +178,7 @@ async def on_voice_state_update(member, before, after):
             start_time = now
             call_sessions[guild_id][voice_channel_id] = {"start_time": start_time, "first_member": member.id}
             jst_time = convert_utc_to_jst(start_time)
-            embed = discord.Embed(title="通話開始", color=0xea958f)
+            embed = discord.Embed(title="通話開始", color=0xE74C3C)
             embed.set_thumbnail(url=f"{member.avatar.url}?size=128")
             embed.add_field(name="チャンネル", value=f"{after.channel.name}")
             embed.add_field(name="始めた人", value=f"{member.display_name}")
@@ -198,7 +198,7 @@ async def on_voice_state_update(member, before, after):
                 start_time = session["start_time"]
                 call_duration = (now - start_time).total_seconds()
                 duration_str = format_duration(call_duration)
-                embed = discord.Embed(title="通話終了", color=0x938dfd)
+                embed = discord.Embed(title="通話終了", color=0x5865F2)
                 embed.add_field(name="チャンネル", value=f"{voice_channel.name}")
                 embed.add_field(name="通話時間", value=f"{duration_str}")
                 if str(guild_id) in server_notification_channels:
