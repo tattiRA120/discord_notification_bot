@@ -376,8 +376,7 @@ async def on_ready():
         print(f"スラッシュコマンドの同期に失敗しました: {e}")
     print(f"Logged in as {bot.user.name}")
     print("現在の通知チャンネル設定:", server_notification_channels)
-    scheduled_previous_month_stats.start()
-    scheduled_annual_stats.start()
+    scheduled_stats.start()
 
 bot.run(TOKEN)
 
