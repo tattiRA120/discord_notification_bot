@@ -51,7 +51,6 @@ def load_channels_from_file():
                 server_notification_channels = {}
     else:
         server_notification_channels = {}
-
     # キーを文字列に統一
     server_notification_channels = {str(guild_id): channel_id for guild_id, channel_id in server_notification_channels.items()}
 
@@ -110,6 +109,60 @@ def record_voice_session(session_start, session_duration, participants):
         voice_stats[month_key]["members"][str(m)] = voice_stats[month_key]["members"].get(str(m), 0) + session_duration
     save_voice_stats()
 
+# --- 年間統計作成用ヘルパー関数 ---
+def create_annual_stats_embed(guild, year: str):
+    """
+    year: "YYYY"形式の文字列
+    対象年度の各月の統計情報を集計し、全体の年間統計情報のembedを作成
+    """
+    # 対象年度の月キーを集める（例："2025-01", ..."2025-12"）
+    sessions_all = []
+    members_total = {}
+    for month_key, data in voice_stats.items():
+        if month_key.startswith(f"{year}-"):
+            sessions = data.get("sessions", [])
+            members = data.get("members", {})
+            sessions_all.extend(sessions)
+            for m_id, dur in members.items():
+                members_total[m_id] = members_total.get(m_id, 0) + dur
+
+    year_display = f"{year}年"
+    if not sessions_all:
+        return None, year_display
+
+    total_duration = sum(sess["duration"] for sess in sessions_all)
+    total_sessions = len(sessions_all)
+    avg_duration = total_duration / total_sessions if total_sessions else 0
+
+    # 最長セッション
+    longest_session = max(sessions_all, key=lambda s: s["duration"])
+    longest_duration = longest_session["duration"]
+    longest_date = convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
+    longest_participants = longest_session["participants"]
+    longest_participants_names = []
+    for mid in longest_participants:
+        m_obj = guild.get_member(mid)
+        if m_obj:
+            longest_participants_names.append(m_obj.display_name)
+        else:
+            longest_participants_names.append(str(mid))
+    longest_info = f"{format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
+
+    # メンバー別ランキング（累計時間）
+    sorted_members = sorted(members_total.items(), key=lambda x: x[1], reverse=True)
+    ranking_lines = []
+    for i, (member_id, duration) in enumerate(sorted_members, start=1):
+        m_obj = guild.get_member(int(member_id))
+        name = m_obj.display_name if m_obj else str(member_id)
+        ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
+    ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
+
+    embed = discord.Embed(title=f"【{year_display}】年間通話統計情報", color=0x00ff00)
+    embed.add_field(name="年間: 平均通話時間", value=f"{format_duration(avg_duration)}", inline=False)
+    embed.add_field(name="年間: 最長通話", value=longest_info, inline=False)
+    embed.add_field(name="年間: 通話時間ランキング", value=ranking_text, inline=False)
+    return embed, year_display
+
 # --- イベントハンドラ ---
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -125,7 +178,7 @@ async def on_voice_state_update(member, before, after):
             start_time = now
             call_sessions[guild_id][voice_channel_id] = {"start_time": start_time, "first_member": member.id}
             jst_time = convert_utc_to_jst(start_time)
-            embed = discord.Embed(title="通話開始", color=0xea958f)
+            embed = discord.Embed(title="通話開始", color=0xE74C3C)
             embed.set_thumbnail(url=f"{member.avatar.url}?size=128")
             embed.add_field(name="チャンネル", value=f"{after.channel.name}")
             embed.add_field(name="始めた人", value=f"{member.display_name}")
@@ -145,7 +198,7 @@ async def on_voice_state_update(member, before, after):
                 start_time = session["start_time"]
                 call_duration = (now - start_time).total_seconds()
                 duration_str = format_duration(call_duration)
-                embed = discord.Embed(title="通話終了", color=0x938dfd)
+                embed = discord.Embed(title="通話終了", color=0x5865F2)
                 embed.add_field(name="チャンネル", value=f"{voice_channel.name}")
                 embed.add_field(name="通話時間", value=f"{duration_str}")
                 if str(guild_id) in server_notification_channels:
@@ -159,16 +212,13 @@ async def on_voice_state_update(member, before, after):
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + call_duration
 
     # --- 二人以上通話状態の記録 ---
-    # 判定対象は、現在いるチャンネルが「二人以上」になっているかどうかです。
     if after.channel is not None:
         vc = after.channel
         key = (guild_id, vc.id)
         if len(vc.members) >= 2:
-            # セッションが開始されていなければ開始
             if key not in active_voice_sessions:
                 active_voice_sessions[key] = {"start_time": now, "participants": [m.id for m in vc.members]}
         else:
-            # activeなセッションがあれば終了
             if key in active_voice_sessions:
                 session = active_voice_sessions.pop(key)
                 session_duration = (now - session["start_time"]).total_seconds()
@@ -187,14 +237,12 @@ async def on_voice_state_update(member, before, after):
 @bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
 @app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
 async def call_stats(interaction: discord.Interaction, month: str = None):
-    # 指定がなければ現在の月を使用
     if month is None:
         now = datetime.datetime.now(datetime.timezone.utc)
         current_month = now.strftime("%Y-%m")
     else:
         current_month = month
 
-    # current_month を「YYYY年MM月」形式に変換
     try:
         year, mon = current_month.split("-")
         month_display = f"{year}年{mon}月"
@@ -204,7 +252,6 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 
     load_voice_stats()
 
-    # 統計情報が存在しない場合
     if current_month not in voice_stats:
         await interaction.response.send_message(f"{month_display}は通話統計情報が記録されていません", ephemeral=True)
         return
@@ -213,13 +260,11 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
     sessions = monthly_data["sessions"]
     member_stats = monthly_data["members"]
 
-    # 月間平均（セッションごとの平均時間）
     if sessions:
         monthly_avg = sum(sess["duration"] for sess in sessions) / len(sessions)
     else:
         monthly_avg = 0
 
-    # 月間最長セッション
     if sessions:
         longest_session = max(sessions, key=lambda s: s["duration"])
         longest_duration = longest_session["duration"]
@@ -236,7 +281,6 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
     else:
         longest_info = "なし"
 
-    # メンバー別ランキング（累計時間）
     sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
     ranking_lines = []
     for i, (member_id, duration) in enumerate(sorted_members, start=1):
@@ -250,35 +294,59 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
     embed.add_field(name="最長通話", value=longest_info, inline=False)
     embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
 
-    # 送信時に ephemeral=True を指定して送信者のみ表示
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# --- 通知先チャンネル変更コマンド ---
-@bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
+# 管理者用：通知先チャンネル変更コマンド
+@bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    # 管理者権限のチェック
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("このコマンドは管理者専用です。", ephemeral=True)
+        return
+
     guild_id = str(interaction.guild.id)
     if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
         current_channel = bot.get_channel(server_notification_channels[guild_id])
-        await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。")
+        await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。", ephemeral=True)
     else:
         server_notification_channels[guild_id] = channel.id
         save_channels_to_file()
-        await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
+        await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。", ephemeral=True)
 
-# --- 毎月1日20時に前月の統計情報を送信するタスク ---
+# 管理者用：年間統計情報送信デバッグコマンド
+@bot.tree.command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします")
+@app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
+async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
+    # 管理者権限のチェック
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("このコマンドは管理者専用です。", ephemeral=True)
+        return
+
+    # 年度の指定がなければ現在の年度を使用
+    if year is None:
+        now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+        year = str(now.year)
+    
+    load_voice_stats()
+    embed, display = create_annual_stats_embed(interaction.guild, year)
+    if embed:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message(f"{display}の通話統計情報が記録されていません", ephemeral=True)
+
+# --- 毎日20時に統計情報を送信するタスク ---
 @tasks.loop(time=datetime.time(hour=20, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
-async def scheduled_previous_month_stats():
+async def scheduled_stats():
     now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
-    # JSTで毎日20:00に実行されるが、日付が1日の場合のみ処理する
+    load_voice_stats()  # 最新の統計情報をロード
+
+    # 前月の統計情報送信（毎月1日の場合）
     if now.day == 1:
-        # 前月を算出（例：2025年03月1日20時 → 前月は2025-02）
         first_day_current = now.replace(day=1)
         prev_month_last_day = first_day_current - datetime.timedelta(days=1)
         previous_month = prev_month_last_day.strftime("%Y-%m")
         
-        load_voice_stats()  # 最新の統計情報をロード
-
         for guild_id, channel_id in server_notification_channels.items():
             guild = bot.get_guild(int(guild_id))
             channel = bot.get_channel(channel_id)
@@ -288,6 +356,19 @@ async def scheduled_previous_month_stats():
                     await channel.send(embed=embed)
                 else:
                     await channel.send(f"{month_display}は通話統計情報が記録されていません")
+    
+    # 年間統計情報送信（12月31日の場合）
+    if now.month == 12 and now.day == 31:
+        year_str = str(now.year)
+        for guild_id, channel_id in server_notification_channels.items():
+            guild = bot.get_guild(int(guild_id))
+            channel = bot.get_channel(channel_id)
+            if guild and channel:
+                embed, year_display = create_annual_stats_embed(guild, year_str)
+                if embed:
+                    await channel.send(embed=embed)
+                else:
+                    await channel.send(f"{year_display}の通話統計情報が記録されていません")
 
 # --- 起動時処理 ---
 @bot.event
@@ -301,6 +382,7 @@ async def on_ready():
         print(f"スラッシュコマンドの同期に失敗しました: {e}")
     print(f"Logged in as {bot.user.name}")
     print("現在の通知チャンネル設定:", server_notification_channels)
+    scheduled_stats.start()
 
 bot.run(TOKEN)
 
