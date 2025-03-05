@@ -126,9 +126,9 @@ def create_annual_stats_embed(guild, year: str):
             for m_id, dur in members.items():
                 members_total[m_id] = members_total.get(m_id, 0) + dur
 
-    month_display = f"{year}年"
+    year_display = f"{year}年"
     if not sessions_all:
-        return None, month_display
+        return None, year_display
 
     total_duration = sum(sess["duration"] for sess in sessions_all)
     total_sessions = len(sessions_all)
@@ -157,11 +157,11 @@ def create_annual_stats_embed(guild, year: str):
         ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
-    embed = discord.Embed(title=f"【{month_display}】通話統計情報", color=0x00ff00)
-    embed.add_field(name="平均通話時間", value=f"{format_duration(avg_duration)}", inline=False)
-    embed.add_field(name="最長通話", value=longest_info, inline=False)
-    embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
-    return embed, month_display
+    embed = discord.Embed(title=f"【{year_display}】年間通話統計情報", color=0x00ff00)
+    embed.add_field(name="年間：平均通話時間", value=f"{format_duration(avg_duration)}", inline=False)
+    embed.add_field(name="年間：最長通話", value=longest_info, inline=False)
+    embed.add_field(name="年間：通話時間ランキング", value=ranking_text, inline=False)
+    return embed, year_display
 
 # --- イベントハンドラ ---
 @bot.event
@@ -297,7 +297,7 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # 管理者用：通知先チャンネル変更コマンド
-@bot.tree.command(name="changesendchannel", description="管理者専用: 通知先のチャンネルを変更します")
+@bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
     # 管理者権限のチェック
