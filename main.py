@@ -213,35 +213,36 @@ async def on_voice_state_update(member, before, after):
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + call_duration
 
     # --- 2人以上通話状態の記録（各メンバーごとに記録する処理） ---
+
     # 対象チャンネル（入室または退室対象）
-    # ここでは、beforeとafterの両方でチャンネルの変化をチェックする
-    # ※ チャンネルが同じ場合は何もしない
     channel_before = before.channel
     channel_after = after.channel
 
-    # もし同一チャンネル内での状態変化であれば、ここでは何もしない
+    # 同一チャンネル内での状態変化の場合は何もしない
     if channel_before == channel_after:
         return
 
     # 退室側の処理（before.channel から退出した場合）
     if channel_before is not None:
         key = (guild_id, channel_before.id)
-        # 該当チャンネル内で、対象メンバーが記録されているなら退室処理
+        # もし対象メンバーが記録されていれば、そのメンバーの通話時間を計算して記録
         if key in active_voice_sessions and member.id in active_voice_sessions[key]:
             join_time = active_voice_sessions[key].pop(member.id)
             duration = (now - join_time).total_seconds()
-            # 加算
+            # 個別セッションとして voice_stats.json に記録（対象は退室した1人）
+            record_voice_session(join_time, duration, [member.id])
+            # なお、member_call_times も更新する（必要に応じて）
             member_call_times[member.id] = member_call_times.get(member.id, 0) + duration
-            # ここで、退室メンバーのみ記録済み時間を反映
-        # また、もし退室後にチャンネル内の人数が1以下になった場合は、
-        # チャンネルに残る全員について退室処理を行う
+
+        # さらに、もし退室後にチャンネル内の人数が1人以下になった場合は、
+        # チャンネル内に残っている全メンバーについて退室処理を実施
         if channel_before.members is not None and len(channel_before.members) < 2:
             if key in active_voice_sessions:
                 for m_id, join_time in active_voice_sessions[key].copy().items():
                     duration = (now - join_time).total_seconds()
+                    record_voice_session(join_time, duration, [m_id])
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + duration
                     active_voice_sessions[key].pop(m_id)
-                # その後、削除しておく
                 active_voice_sessions.pop(key, None)
 
     # 入室側の処理（after.channel に入室した場合）
@@ -255,10 +256,7 @@ async def on_voice_state_update(member, before, after):
             if member.id not in active_voice_sessions[key]:
                 active_voice_sessions[key][member.id] = now
 
-        # また、すでにそのチャンネルにいるメンバーで、まだ記録されていないメンバーがいれば記録する
-        if len(channel_after.members) >= 2:
-            if key not in active_voice_sessions:
-                active_voice_sessions[key] = {}
+            # また、すでにそのチャンネルにいるメンバーで記録が無い場合は記録する
             for m in channel_after.members:
                 if m.id not in active_voice_sessions[key]:
                     active_voice_sessions[key][m.id] = now
