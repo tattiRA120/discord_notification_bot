@@ -296,19 +296,25 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# --- 通知先チャンネル変更コマンド ---
-@bot.tree.command(name="changesendchannel", description="通知先のチャンネルを変更します")
+# 管理者用：通知先チャンネル変更コマンド
+@bot.tree.command(name="changesendchannel", description="管理者専用: 通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
+    # 管理者権限のチェック
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("このコマンドは管理者専用です。", ephemeral=True)
+        return
+
     guild_id = str(interaction.guild.id)
     if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
         current_channel = bot.get_channel(server_notification_channels[guild_id])
-        await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。")
+        await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。", ephemeral=True)
     else:
         server_notification_channels[guild_id] = channel.id
         save_channels_to_file()
-        await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
+        await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。", ephemeral=True)
 
+# 管理者用：年間統計情報送信デバッグコマンド
 @bot.tree.command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします")
 @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
 async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
