@@ -309,6 +309,26 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
         save_channels_to_file()
         await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。")
 
+@bot.tree.command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします")
+@app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
+async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
+    # 管理者権限のチェック
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("このコマンドは管理者専用です。", ephemeral=True)
+        return
+
+    # 年度の指定がなければ現在の年度を使用
+    if year is None:
+        now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+        year = str(now.year)
+    
+    load_voice_stats()
+    embed, display = create_annual_stats_embed(interaction.guild, year)
+    if embed:
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+    else:
+        await interaction.response.send_message(f"{display}の通話統計情報が記録されていません", ephemeral=True)
+
 # --- 毎日20時に統計情報を送信するタスク ---
 @tasks.loop(time=datetime.time(hour=20, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
 async def scheduled_stats():
