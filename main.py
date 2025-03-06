@@ -263,7 +263,7 @@ async def on_voice_state_update(member, before, after):
     # 入室処理（after.channelに入室した場合）
     if channel_after is not None:
         key = (guild_id, channel_after.id)
-        # 新規セッションを開始するのは、チャンネル内の人数が2人以上の場合のみ
+        # チャンネル内の人数が2人以上の場合
         if len(channel_after.members) >= 2:
             if key not in active_voice_sessions:
                 # セッション開始時刻は、通話が2人以上になった時刻（この時点の now）
@@ -272,13 +272,21 @@ async def on_voice_state_update(member, before, after):
                     "current_members": { m.id: now for m in channel_after.members },
                     "all_participants": set(m.id for m in channel_after.members)
                 }
+            else:
+                # 既存のセッションがある場合、新たに入室したメンバーを更新する
+                session_data = active_voice_sessions[key]
+                for m in channel_after.members:
+                    if m.id not in session_data["current_members"]:
+                        session_data["current_members"][m.id] = now
+                    session_data["all_participants"].add(m.id)
         else:
-            session_data = active_voice_sessions[key]
-            # 既にセッションがある場合、新たに入室したメンバーについて処理
-            for m in channel_after.members:
-                if m.id not in session_data["current_members"]:
-                    session_data["current_members"][m.id] = now
-                session_data["all_participants"].add(m.id)
+            # 人数が2人未満の場合は、既にセッションが存在する場合のみ更新する
+            if key in active_voice_sessions:
+                session_data = active_voice_sessions[key]
+                for m in channel_after.members:
+                    if m.id not in session_data["current_members"]:
+                        session_data["current_members"][m.id] = now
+                    session_data["all_participants"].add(m.id)
 
 # --- /call_stats コマンド ---
 @bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
