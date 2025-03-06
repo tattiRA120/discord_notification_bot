@@ -91,7 +91,7 @@ def save_voice_stats():
     with open(VOICE_STATS_FILE, "w") as f:
         json.dump(voice_stats, f, indent=2)
 
-# 指定されたセッションの開始月に、対象メン>バーのdurationを加算して保存する
+# 指定されたセッションの開始月に、対象メンバーのdurationを加算して保存する
 def update_member_stats(member_id, session_start, duration):
     month_key = session_start.strftime("%Y-%m")
     if month_key not in voice_stats:
