@@ -65,7 +65,6 @@ def format_duration(duration_seconds):
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 # (guild_id, channel_id) をキーに、現在進行中の「2人以上通話セッション」を記録する
-# active_voice_sessions を { (guild_id, channel_id): { member_id: join_time, ... } } として管理
 active_voice_sessions = {}
 
 # 月間の通話統計を記録するファイル
@@ -212,7 +211,13 @@ async def on_voice_state_update(member, before, after):
                     m_id = m.id
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + call_duration
 
-    # --- 2人以上通話状態の記録（各メンバーごとに記録する処理） ---
+    # --- 2人以上通話状態の記録（各メンバーごとに個別記録＋全参加者リストを維持する処理） ---
+
+    # active_voice_sessions は { (guild_id, channel_id): {
+    #      "session_start": datetime,
+    #      "current_members": { member_id: join_time, ... },
+    #      "all_participants": set([member_id, ...])
+    # } }
 
     # 対象チャンネル（入室または退室対象）
     channel_before = before.channel
@@ -222,44 +227,48 @@ async def on_voice_state_update(member, before, after):
     if channel_before == channel_after:
         return
 
-    # 退室側の処理（before.channel から退出した場合）
+    # 退室処理（before.channel から退出した場合）
     if channel_before is not None:
         key = (guild_id, channel_before.id)
-        # もし対象メンバーが記録されていれば、そのメンバーの通話時間を計算して記録
-        if key in active_voice_sessions and member.id in active_voice_sessions[key]:
-            join_time = active_voice_sessions[key].pop(member.id)
-            duration = (now - join_time).total_seconds()
-            # 個別セッションとして voice_stats.json に記録（対象は退室した1人）
-            record_voice_session(join_time, duration, [member.id])
-            # なお、member_call_times も更新する（必要に応じて）
-            member_call_times[member.id] = member_call_times.get(member.id, 0) + duration
-
-        # さらに、もし退室後にチャンネル内の人数が1人以下になった場合は、
-        # チャンネル内に残っている全メンバーについて退室処理を実施
-        if channel_before.members is not None and len(channel_before.members) < 2:
-            if key in active_voice_sessions:
-                for m_id, join_time in active_voice_sessions[key].copy().items():
+        if key in active_voice_sessions:
+            session_data = active_voice_sessions[key]
+            # もし対象メンバーが在室中なら退室処理を行う
+            if member.id in session_data["current_members"]:
+                join_time = session_data["current_members"].pop(member.id)
+                duration = (now - join_time).total_seconds()
+                member_call_times[member.id] = member_call_times.get(member.id, 0) + duration
+            # チャンネル内人数が1人以下なら、セッション終了処理
+            if channel_before.members is not None and len(channel_before.members) < 2:
+                # 退室中の残りメンバーも処理
+                for m_id, join_time in session_data["current_members"].copy().items():
                     duration = (now - join_time).total_seconds()
-                    record_voice_session(join_time, duration, [m_id])
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + duration
-                    active_voice_sessions[key].pop(m_id)
+                    session_data["current_members"].pop(m_id)
+                # 記録するセッションの通話時間は全体の期間
+                session_duration = (now - session_data["session_start"]).total_seconds()
+                # all_participants はセッション開始以降に参加した全員
+                record_voice_session(session_data["session_start"], session_duration, list(session_data["all_participants"]))
                 active_voice_sessions.pop(key, None)
 
-    # 入室側の処理（after.channel に入室した場合）
+    # 入室処理（after.channel に入室した場合）
     if channel_after is not None:
         key = (guild_id, channel_after.id)
-        # チャンネル内の人数が2人以上なら記録を開始
-        if len(channel_after.members) >= 2:
-            if key not in active_voice_sessions:
-                active_voice_sessions[key] = {}
-            # 入室したメンバーについて、記録がなければ記録する
-            if member.id not in active_voice_sessions[key]:
-                active_voice_sessions[key][member.id] = now
-
-            # また、すでにそのチャンネルにいるメンバーで記録が無い場合は記録する
+        if key not in active_voice_sessions:
+            # 新規セッション開始
+            active_voice_sessions[key] = {
+                "session_start": now,
+                "current_members": { member.id: now for member in channel_after.members },
+                "all_participants": set(m.id for m in channel_after.members)
+            }
+        else:
+            session_data = active_voice_sessions[key]
+            # 既にセッションがある場合、新たに入室したメンバーについて処理
             for m in channel_after.members:
-                if m.id not in active_voice_sessions[key]:
-                    active_voice_sessions[key][m.id] = now
+                if m.id not in session_data["current_members"]:
+                    # 追加: 入室時刻は現在時刻
+                    session_data["current_members"][m.id] = now
+                # all_participants にも追加（setなので重複は防げる）
+                session_data["all_participants"].add(m.id)
 
 # --- /call_stats コマンド ---
 @bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
