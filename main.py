@@ -238,7 +238,7 @@ async def on_voice_state_update(member, before, after):
     if channel_before == channel_after:
         return
 
-    # 退室処理（before.channelから退出した場合）
+    # 退室処理（before.channel から退出した場合）
     if channel_before is not None:
         key = (guild_id, channel_before.id)
         if key in active_voice_sessions:
@@ -251,28 +251,27 @@ async def on_voice_state_update(member, before, after):
                 update_member_stats(member.id, join_time, duration)
             # もし退室後、チャンネル内人数が1人以下ならセッション終了処理を実施
             if channel_before.members is not None and len(channel_before.members) < 2:
-                # 退室処理を、残っている各メンバーについて実施
                 for m_id, join_time in session_data["current_members"].copy().items():
                     d = (now - join_time).total_seconds()
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + d
                     update_member_stats(m_id, join_time, d)
                     session_data["current_members"].pop(m_id)
-                # 全体セッションの期間は、最初に入室した時刻から now まで
                 overall_duration = (now - session_data["session_start"]).total_seconds()
-                # セッションレコードとして記録（個別メンバー更新はしない）
                 record_voice_session(session_data["session_start"], overall_duration, list(session_data["all_participants"]), update_members=False)
                 active_voice_sessions.pop(key, None)
 
     # 入室処理（after.channelに入室した場合）
     if channel_after is not None:
         key = (guild_id, channel_after.id)
-        if key not in active_voice_sessions:
-            # 新規セッション開始
-            active_voice_sessions[key] = {
-                "session_start": now,
-                "current_members": { m.id: now for m in channel_after.members },
-                "all_participants": set(m.id for m in channel_after.members)
-            }
+        # 新規セッションを開始するのは、チャンネル内の人数が2人以上の場合のみ
+        if len(channel_after.members) >= 2:
+            if key not in active_voice_sessions:
+                # セッション開始時刻は、通話が2人以上になった時刻（この時点の now）
+                active_voice_sessions[key] = {
+                    "session_start": now,
+                    "current_members": { m.id: now for m in channel_after.members },
+                    "all_participants": set(m.id for m in channel_after.members)
+                }
         else:
             session_data = active_voice_sessions[key]
             # 既にセッションがある場合、新たに入室したメンバーについて処理
