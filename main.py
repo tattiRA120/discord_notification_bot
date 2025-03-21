@@ -12,6 +12,7 @@ load_dotenv()
 
 # 環境変数からトークンを取得
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+GUILD_ID = int(os.getenv('GUILD_ID'))
 
 intents = discord.Intents.default()
 intents.voice_states = True  # ボイスチャンネルの変更イベントを有効にする
@@ -451,11 +452,22 @@ async def scheduled_stats():
 async def on_ready():
     load_channels_from_file()
     load_voice_stats()
+    
+    # グローバルコマンドを同期
     try:
         await bot.tree.sync()
-        print("スラッシュコマンドが正常に同期されました。")
+        print("グローバルコマンドが正常に同期されました。")
     except Exception as e:
-        print(f"スラッシュコマンドの同期に失敗しました: {e}")
+        print(f"グローバルコマンドの同期に失敗しました: {e}")
+    
+    # ギルドコマンドを同期
+    try:
+        guild = discord.Object(id=GUILD_ID)
+        await bot.tree.sync(guild=guild)
+        print(f"ギルドコマンドを{GUILD_ID} に同期しました。")
+    except Exception as e:
+        print(f"ギルドコマンドの同期に失敗しました: {e}")
+
     print(f"Logged in as {bot.user.name}")
     print("現在の通知チャンネル設定:", server_notification_channels)
     scheduled_stats.start()
