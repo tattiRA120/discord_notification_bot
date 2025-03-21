@@ -351,9 +351,9 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# 通話総累計時間表示コマンド
-@bot.tree.command(name="all_time", description="メンバーの通話総累計時間を表示します")
-async def all_time(interaction: discord.Interaction, member: discord.Member = None):
+# --- /total_time コマンド ---
+@bot.tree.command(name="total_time", description="メンバーの通話総累計時間を表示します")
+async def total_time(interaction: discord.Interaction, member: discord.Member = None):
     load_voice_stats()  # 最新のデータを読み込む
     member = member or interaction.user  # デフォルトはコマンド送信者
     total_seconds = sum(
@@ -361,11 +361,16 @@ async def all_time(interaction: discord.Interaction, member: discord.Member = No
         for stats in voice_stats.values()
     )
 
+    embed = discord.Embed(title="通話総累計時間", color=discord.Color.blue())
+    embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+    
     if total_seconds == 0:
-        await interaction.response.send_message(f"{member.display_name} さんの通話履歴はありません。", ephemeral=True)
+        embed.description = "通話履歴はありません。"
     else:
         formatted_time = format_duration(total_seconds)
-        await interaction.response.send_message(f"{member.display_name} さんの累計通話時間: {formatted_time}", ephemeral=True)
+        embed.add_field(name="累計通話時間", value=formatted_time, inline=False)
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # 管理者用：通知先チャンネル変更コマンド
 @bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
