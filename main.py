@@ -291,6 +291,7 @@ async def on_voice_state_update(member, before, after):
 # --- /call_stats コマンド ---
 @bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
 @app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
+@app_commands.guild_only()
 async def call_stats(interaction: discord.Interaction, month: str = None):
     if month is None:
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -351,9 +352,33 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# --- /total_time コマンド ---
+@bot.tree.command(name="total_time", description="メンバーの通話総累計時間を表示します")
+@app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
+@app_commands.guild_only()
+async def total_time(interaction: discord.Interaction, member: discord.Member = None):
+    load_voice_stats()  # 最新のデータを読み込む
+    member = member or interaction.user  # デフォルトはコマンド送信者
+    total_seconds = sum(
+        stats["members"].get(str(member.id), 0)
+        for stats in voice_stats.values()
+    )
+
+    embed = discord.Embed(color=discord.Color.blue())
+    embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+    
+    if total_seconds == 0:
+        embed.add_field(name="総通話時間", value="通話履歴はありません。", inline=False)
+    else:
+        formatted_time = format_duration(total_seconds)
+        embed.add_field(name="総通話時間", value=formatted_time, inline=False)
+
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # 管理者用：通知先チャンネル変更コマンド
 @bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
+@app_commands.guild_only()
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
     # 管理者権限のチェック
     if not interaction.user.guild_permissions.administrator:
@@ -372,6 +397,7 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
 # 管理者用：年間統計情報送信デバッグコマンド
 @bot.tree.command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします")
 @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
+@app_commands.guild_only()
 async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
     # 管理者権限のチェック
     if not interaction.user.guild_permissions.administrator:
@@ -430,13 +456,18 @@ async def scheduled_stats():
 async def on_ready():
     load_channels_from_file()
     load_voice_stats()
-    try:
-        await bot.tree.sync()
-        print("スラッシュコマンドが正常に同期されました。")
-    except Exception as e:
-        print(f"スラッシュコマンドの同期に失敗しました: {e}")
-    print(f"Logged in as {bot.user.name}")
-    print("現在の通知チャンネル設定:", server_notification_channels)
+
+    print(f'ログインしました: {bot.user.name}')
+
+    # 最初のギルドを基準にグローバルコマンドをコピー
+    if bot.guilds:
+        bot.tree.copy_global_to(guild=bot.guilds[0])
+
+    # すべてのギルドでコマンドを同期
+    for guild in bot.guilds:
+        print(f'接続中のサーバー: {guild.name} (ID: {guild.id})')
+        await bot.tree.sync(guild=guild)
+
     scheduled_stats.start()
 
 bot.run(TOKEN)
