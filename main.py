@@ -468,7 +468,6 @@ async def on_ready():
         print(f'接続中のサーバー: {guild.name} (ID: {guild.id})')
         await bot.tree.sync(guild=guild)
 
-    print("現在の通知チャンネル設定:", server_notification_channels)
     scheduled_stats.start()
 
 bot.run(TOKEN)
