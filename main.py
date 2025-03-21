@@ -354,6 +354,7 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 
 # --- /total_time コマンド ---
 @bot.tree.command(name="total_time", description="メンバーの通話総累計時間を表示します")
+@app_commands.guilds(discord.Object(id=GUILD_ID))
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
     load_voice_stats()  # 最新のデータを読み込む
     member = member or interaction.user  # デフォルトはコマンド送信者
@@ -461,6 +462,7 @@ async def on_ready():
         print(f"グローバルコマンドの同期に失敗しました: {e}")
     
     # ギルドコマンドを同期
+    # @app_commands.guilds(discord.Object(id=GUILD_ID))
     try:
         guild = discord.Object(id=GUILD_ID)
         await bot.tree.sync(guild=guild)
