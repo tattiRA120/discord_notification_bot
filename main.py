@@ -354,6 +354,7 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 
 # --- /total_time コマンド ---
 @bot.tree.command(name="total_time", description="メンバーの通話総累計時間を表示します")
+@app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
     load_voice_stats()  # 最新のデータを読み込む
@@ -363,15 +364,15 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
         for stats in voice_stats.values()
     )
 
-    embed = discord.Embed(title="通話総累計時間", color=discord.Color.blue())
+    embed = discord.Embed(color=discord.Color.blue())
     embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
     
     if total_seconds == 0:
-        embed.description = "通話履歴はありません。"
+        embed.add_field(name="総通話時間", value="通話履歴はありません。", inline=False)
     else:
         formatted_time = format_duration(total_seconds)
-        embed.add_field(name="累計通話時間", value=formatted_time, inline=False)
-    
+        embed.add_field(name="総通話時間", value=formatted_time, inline=False)
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # 管理者用：通知先チャンネル変更コマンド
