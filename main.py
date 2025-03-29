@@ -119,6 +119,54 @@ def record_voice_session(session_start, session_duration, participants, update_m
             voice_stats[month_key]["members"][str(m)] = voice_stats[month_key]["members"].get(str(m), 0) + session_duration
     save_voice_stats()
 
+# --- メンバーの総累計時間を計算するヘルパー関数 ---
+def get_total_call_time(member_id):
+    """指定されたメンバーの全期間の累計通話時間（秒）を計算する"""
+    load_voice_stats() # 念のため最新データを読み込む
+    total_seconds = sum(
+        stats["members"].get(str(member_id), 0)
+        for stats in voice_stats.values()
+    )
+    return total_seconds
+
+# --- 10時間達成通知用ヘルパー関数 ---
+async def check_and_notify_milestone(member: discord.Member, guild: discord.Guild, before_total: float, after_total: float):
+    """累計通話時間が10時間の倍数を超えたかチェックし、通知する"""
+    guild_id = str(guild.id)
+    if guild_id not in server_notification_channels:
+        return # 通知先チャンネルが設定されていない場合は何もしない
+
+    notification_channel_id = server_notification_channels[guild_id]
+    notification_channel = bot.get_channel(notification_channel_id)
+    if not notification_channel:
+        print(f"通知チャンネルが見つかりません: ギルドID {guild_id}, チャンネルID {notification_channel_id}")
+        return
+
+    hour_threshold = 10 * 3600 # 10時間 = 36000秒
+    before_milestone = int(before_total // hour_threshold)
+    after_milestone = int(after_total // hour_threshold)
+
+    if after_milestone > before_milestone:
+        achieved_hours = after_milestone * 10
+        embed = discord.Embed(
+            title="🎉 通話時間達成！ 🎉",
+            description=f"{member.mention} さんの累計通話時間が **{achieved_hours}時間** を達成しました！",
+            color=discord.Color.gold()
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.add_field(name="メンバー", value=member.display_name, inline=True)
+        embed.add_field(name="達成時間", value=f"{achieved_hours} 時間", inline=True)
+        embed.add_field(name="現在の総累計時間", value=format_duration(after_total), inline=False)
+        embed.timestamp = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+
+        try:
+            await notification_channel.send(embed=embed)
+        except discord.Forbidden:
+            print(f"エラー: チャンネル {notification_channel.name} ({notification_channel_id}) への送信権限がありません。")
+        except Exception as e:
+            print(f"通知送信中にエラーが発生しました: {e}")
+
+
 # --- 年間統計作成用ヘルパー関数 ---
 def create_annual_stats_embed(guild, year: str):
     """
@@ -248,16 +296,37 @@ async def on_voice_state_update(member, before, after):
                 join_time = session_data["current_members"].pop(member.id)
                 duration = (now - join_time).total_seconds()
                 member_call_times[member.id] = member_call_times.get(member.id, 0) + duration
-                update_member_stats(member.id, join_time, duration)
+
+                # --- 10時間達成チェック ---
+                before_total = get_total_call_time(member.id) # 更新前の累計時間を取得
+                update_member_stats(member.id, join_time, duration) # 統計を更新
+                after_total = get_total_call_time(member.id) # 更新後の累計時間を取得
+                await check_and_notify_milestone(member, member.guild, before_total, after_total) # 通知チェック
+                # --- ここまで ---
+
             # もし退室後、チャンネル内人数が1人以下ならセッション終了処理を実施
             if channel_before.members is not None and len(channel_before.members) < 2:
-                for m_id, join_time in session_data["current_members"].copy().items():
+                # セッション終了時の残メンバーの統計更新と通知チェック
+                remaining_members_data = session_data["current_members"].copy()
+                for m_id, join_time in remaining_members_data.items():
                     d = (now - join_time).total_seconds()
                     member_call_times[m_id] = member_call_times.get(m_id, 0) + d
-                    update_member_stats(m_id, join_time, d)
-                    session_data["current_members"].pop(m_id)
+
+                    # --- 10時間達成チェック (セッション終了時) ---
+                    m_obj = member.guild.get_member(m_id) # Memberオブジェクトを取得
+                    if m_obj:
+                        before_total_sess_end = get_total_call_time(m_id)
+                        update_member_stats(m_id, join_time, d)
+                        after_total_sess_end = get_total_call_time(m_id)
+                        await check_and_notify_milestone(m_obj, member.guild, before_total_sess_end, after_total_sess_end)
+                    else: # Memberオブジェクトが取得できない場合は統計更新のみ
+                         update_member_stats(m_id, join_time, d)
+                    # --- ここまで ---
+
+                    session_data["current_members"].pop(m_id) # current_membersから削除
+
                 overall_duration = (now - session_data["session_start"]).total_seconds()
-                record_voice_session(session_data["session_start"], overall_duration, list(session_data["all_participants"]), update_members=False)
+                record_voice_session(session_data["session_start"], overall_duration, list(session_data["all_participants"]), update_members=False) # セッション全体の記録（個別更新は済んでいるのでFalse）
                 active_voice_sessions.pop(key, None)
 
     # 入室処理（after.channelに入室した場合）
@@ -357,12 +426,8 @@ async def call_stats(interaction: discord.Interaction, month: str = None):
 @app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
-    load_voice_stats()  # 最新のデータを読み込む
     member = member or interaction.user  # デフォルトはコマンド送信者
-    total_seconds = sum(
-        stats["members"].get(str(member.id), 0)
-        for stats in voice_stats.values()
-    )
+    total_seconds = get_total_call_time(member.id) # ヘルパー関数を使用
 
     embed = discord.Embed(color=discord.Color.blue())
     embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
@@ -471,4 +536,3 @@ async def on_ready():
     scheduled_stats.start()
 
 bot.run(TOKEN)
-
