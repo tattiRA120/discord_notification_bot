@@ -462,8 +462,9 @@ async def call_duration(interaction: discord.Interaction):
     if not active_calls_info:
         await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
     else:
-        embed = discord.Embed(title="現在の通話時間", color=discord.Color.green())
-        embed.description = "\n".join(active_calls_info)
+        embed = discord.Embed(color=discord.Color.blue()) # 色を blue に変更
+        embed.set_author(name="現在の通話状況") # タイトルを Author Name に設定
+        embed.add_field(name="各チャンネルの経過時間", value="\n".join(active_calls_info), inline=False) # フィールドとして追加
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # 管理者用：通知先チャンネル変更コマンド
