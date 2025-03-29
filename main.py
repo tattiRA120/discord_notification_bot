@@ -440,6 +440,32 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# --- /call_duration コマンド ---
+@bot.tree.command(name="call_duration", description="現在アクティブな通話（2人以上）の経過時間を表示します")
+@app_commands.guild_only()
+async def call_duration(interaction: discord.Interaction):
+    guild_id = interaction.guild.id
+    now = datetime.datetime.now(datetime.timezone.utc)
+    active_calls_info = []
+
+    load_voice_stats() # 念のため最新データを読み込む (active_voice_sessions自体はメモリ上にあるが、他の統計関数を呼ぶ可能性を考慮)
+
+    for key, session_data in active_voice_sessions.items():
+        if key[0] == guild_id: # 現在のギルドのセッションか確認
+            channel = bot.get_channel(key[1])
+            if channel and isinstance(channel, discord.VoiceChannel):
+                # セッション開始からの経過時間を計算
+                duration_seconds = (now - session_data["session_start"]).total_seconds()
+                formatted_duration = format_duration(duration_seconds)
+                active_calls_info.append(f"- **{channel.name}**: {formatted_duration}")
+
+    if not active_calls_info:
+        await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
+    else:
+        embed = discord.Embed(title="現在の通話時間", color=discord.Color.green())
+        embed.description = "\n".join(active_calls_info)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # 管理者用：通知先チャンネル変更コマンド
 @bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
