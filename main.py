@@ -446,9 +446,12 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
 async def call_duration(interaction: discord.Interaction):
     guild_id = interaction.guild.id
     now = datetime.datetime.now(datetime.timezone.utc)
-    active_calls_info = []
+    active_calls_found = False # アクティブな通話があったかどうかのフラグ
 
-    load_voice_stats() # 念のため最新データを読み込む (active_voice_sessions自体はメモリ上にあるが、他の統計関数を呼ぶ可能性を考慮)
+    load_voice_stats() # 念のため最新データを読み込む
+
+    embed = discord.Embed(color=discord.Color.blue())
+    embed.set_author(name="現在の通話状況")
 
     for key, session_data in active_voice_sessions.items():
         if key[0] == guild_id: # 現在のギルドのセッションか確認
@@ -457,14 +460,13 @@ async def call_duration(interaction: discord.Interaction):
                 # セッション開始からの経過時間を計算
                 duration_seconds = (now - session_data["session_start"]).total_seconds()
                 formatted_duration = format_duration(duration_seconds)
-                active_calls_info.append(f"- **{channel.name}**: {formatted_duration}")
+                # チャンネルごとにフィールドを追加
+                embed.add_field(name=f"{channel.name}", value=formatted_duration, inline=False)
+                active_calls_found = True # アクティブな通話が見つかった
 
-    if not active_calls_info:
+    if not active_calls_found:
         await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
     else:
-        embed = discord.Embed(color=discord.Color.blue()) # 色を blue に変更
-        embed.set_author(name="現在の通話状況") # タイトルを Author Name に設定
-        embed.add_field(name="各チャンネルの経過時間", value="\n".join(active_calls_info), inline=False) # フィールドとして追加
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # 管理者用：通知先チャンネル変更コマンド
