@@ -558,6 +558,7 @@ async def on_ready():
 
     # グローバルコマンドを削除
     bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
 
     # 各ギルドに対して、グローバルコマンドをコピーして再登録し、同期する
     for guild in bot.guilds:
