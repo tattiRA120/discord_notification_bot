@@ -553,9 +553,9 @@ async def on_ready():
 
     print(f'ログインしました: {bot.user.name}')
 
-    # 最初のギルドを基準にグローバルコマンドをコピー
-    if bot.guilds:
-        bot.tree.copy_global_to(guild=bot.guilds[0])
+    # グローバルコマンドを削除
+    bot.tree.clear_commands(guild=None)
+    await bot.tree.sync()
 
     # すべてのギルドでコマンドを同期
     for guild in bot.guilds:
