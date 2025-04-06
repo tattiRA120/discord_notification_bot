@@ -166,6 +166,82 @@ async def check_and_notify_milestone(member: discord.Member, guild: discord.Guil
         except Exception as e:
             print(f"通知送信中にエラーが発生しました: {e}")
 
+# --- 月間統計作成用ヘルパー関数 ---
+def get_monthly_statistics(guild, month: str):
+    """
+    指定された月（"YYYY-MM"）の統計情報を計算するヘルパー関数
+
+    :param guild: discord.Guild オブジェクト（メンバー名取得に使用）
+    :param month: "YYYY-MM" 形式の文字列
+    :return: (monthly_avg, longest_info, ranking_text) のタプル
+    """
+    load_voice_stats()  # 最新の統計情報を読み込み
+    monthly_data = voice_stats.get(month, {"sessions": [], "members": {}})
+    sessions = monthly_data.get("sessions", [])
+    member_stats = monthly_data.get("members", {})
+
+    # 平均通話時間の計算
+    if sessions:
+        monthly_avg = sum(sess["duration"] for sess in sessions) / len(sessions)
+    else:
+        monthly_avg = 0
+
+    # 最長通話の情報
+    if sessions:
+        longest_session = max(sessions, key=lambda s: s["duration"])
+        longest_duration = longest_session["duration"]
+        # UTCのISO形式からJSTに変換
+        longest_date = convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
+        longest_participants = longest_session.get("participants", [])
+        longest_participants_names = []
+        for mid in longest_participants:
+            m_obj = guild.get_member(mid)
+            if m_obj:
+                longest_participants_names.append(m_obj.display_name)
+            else:
+                longest_participants_names.append(str(mid))
+        longest_info = f"{format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
+    else:
+        longest_info = "なし"
+
+    # メンバー別通話時間ランキング
+    sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
+    ranking_lines = []
+    for i, (member_id, duration) in enumerate(sorted_members, start=1):
+        m_obj = guild.get_member(int(member_id))
+        name = m_obj.display_name if m_obj else str(member_id)
+        ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
+    ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
+
+    return monthly_avg, longest_info, ranking_text
+
+# --- 月間統計Embed作成用ヘルパー関数 ---
+def create_monthly_stats_embed(guild, month: str):
+    """
+    月間統計情報のembedを作成する関数
+    :param guild: discord.Guild オブジェクト
+    :param month: "YYYY-MM" 形式の文字列
+    :return: (embed, month_display) タプル。統計情報がなければ embed は None
+    """
+    try:
+        year, mon = month.split("-")
+        month_display = f"{year}年{mon}月"
+    except Exception:
+        month_display = month
+
+    load_voice_stats()
+
+    if month not in voice_stats:
+        return None, month_display
+
+    monthly_avg, longest_info, ranking_text = get_monthly_statistics(guild, month)
+
+    embed = discord.Embed(title=f"【{month_display}】通話統計情報", color=0x00ff00)
+    embed.add_field(name="平均通話時間", value=f"{format_duration(monthly_avg)}", inline=False)
+    embed.add_field(name="最長通話", value=longest_info, inline=False)
+    embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
+
+    return embed, month_display
 
 # --- 年間統計作成用ヘルパー関数 ---
 def create_annual_stats_embed(guild, year: str):
@@ -358,66 +434,26 @@ async def on_voice_state_update(member, before, after):
                     session_data["all_participants"].add(m.id)
 
 # --- /call_stats コマンド ---
-@bot.tree.command(name="call_stats", description="月間の二人以上が参加していた通話の統計情報を表示します")
+@bot.tree.command(name="call_stats", description="月間の通話の統計情報を表示します")
 @app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
 @app_commands.guild_only()
 async def call_stats(interaction: discord.Interaction, month: str = None):
     if month is None:
         now = datetime.datetime.now(datetime.timezone.utc)
-        current_month = now.strftime("%Y-%m")
-    else:
-        current_month = month
-
+        month = now.strftime("%Y-%m")
+    
     try:
-        year, mon = current_month.split("-")
+        year, mon = month.split("-")
         month_display = f"{year}年{mon}月"
-    except Exception as e:
+    except Exception:
         await interaction.response.send_message("指定された月の形式が正しくありません。形式は YYYY-MM で指定してください。", ephemeral=True)
         return
 
-    load_voice_stats()
+    embed, month_display = create_monthly_stats_embed(interaction.guild, month)
 
-    if current_month not in voice_stats:
+    if embed is None:
         await interaction.response.send_message(f"{month_display}は通話統計情報が記録されていません", ephemeral=True)
         return
-
-    monthly_data = voice_stats.get(current_month, {"sessions": [], "members": {}})
-    sessions = monthly_data["sessions"]
-    member_stats = monthly_data["members"]
-
-    if sessions:
-        monthly_avg = sum(sess["duration"] for sess in sessions) / len(sessions)
-    else:
-        monthly_avg = 0
-
-    if sessions:
-        longest_session = max(sessions, key=lambda s: s["duration"])
-        longest_duration = longest_session["duration"]
-        longest_date = convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
-        longest_participants = longest_session["participants"]
-        longest_participants_names = []
-        for mid in longest_participants:
-            m_obj = interaction.guild.get_member(mid)
-            if m_obj:
-                longest_participants_names.append(m_obj.display_name)
-            else:
-                longest_participants_names.append(str(mid))
-        longest_info = f"{format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
-    else:
-        longest_info = "なし"
-
-    sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
-    ranking_lines = []
-    for i, (member_id, duration) in enumerate(sorted_members, start=1):
-        m_obj = interaction.guild.get_member(int(member_id))
-        name = m_obj.display_name if m_obj else str(member_id)
-        ranking_lines.append(f"{i}.  {format_duration(duration)}  {name}")
-    ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
-
-    embed = discord.Embed(title=f"【{month_display}】通話統計情報", color=0x00ff00)
-    embed.add_field(name="平均通話時間", value=f"{format_duration(monthly_avg)}", inline=False)
-    embed.add_field(name="最長通話", value=longest_info, inline=False)
-    embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -510,13 +546,13 @@ async def debug_annual_stats(interaction: discord.Interaction, year: str = None)
     else:
         await interaction.response.send_message(f"{display}の通話統計情報が記録されていません", ephemeral=True)
 
-# --- 毎日20時に統計情報を送信するタスク ---
-@tasks.loop(time=datetime.time(hour=20, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
+# --- 毎日18時のトリガータスク ---
+@tasks.loop(time=datetime.time(hour=18, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
 async def scheduled_stats():
     now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
     load_voice_stats()  # 最新の統計情報をロード
 
-    # 前月の統計情報送信（毎月1日の場合）
+    # 前月の統計情報送信（毎月1日）
     if now.day == 1:
         first_day_current = now.replace(day=1)
         prev_month_last_day = first_day_current - datetime.timedelta(days=1)
@@ -532,7 +568,7 @@ async def scheduled_stats():
                 else:
                     await channel.send(f"{month_display}は通話統計情報が記録されていません")
     
-    # 年間統計情報送信（12月31日の場合）
+    # 年間統計情報送信（毎年12月31日）
     if now.month == 12 and now.day == 31:
         year_str = str(now.year)
         for guild_id, channel_id in server_notification_channels.items():
