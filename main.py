@@ -553,12 +553,16 @@ async def on_ready():
 
     print(f'ログインしました: {bot.user.name}')
 
+    # 既存のグローバルコマンドを取得（内部属性 _global_commands を利用）
+    global_cmds = list(bot.tree._global_commands.values())
+
     # グローバルコマンドを削除
     bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
 
-    # すべてのギルドでコマンドを同期
+    # 各ギルドに対して、グローバルコマンドをコピーして再登録し、同期する
     for guild in bot.guilds:
+        for cmd in global_cmds:
+            bot.tree.add_command(cmd, guild=guild)
         print(f'接続中のサーバー: {guild.name} (ID: {guild.id})')
         await bot.tree.sync(guild=guild)
 
