@@ -486,7 +486,9 @@ async def call_ranking(interaction: discord.Interaction):
     # メンバーの通話時間を取得
     member_call_times = {}
     for member in members:
-        member_call_times[member.id] = get_total_call_time(member.id)
+        total_seconds = get_total_call_time(member.id)
+        if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを追加
+            member_call_times[member.id] = total_seconds
     
     # 通話時間でランキングを作成
     sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
