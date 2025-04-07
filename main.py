@@ -493,21 +493,18 @@ async def call_ranking(interaction: discord.Interaction):
     # 通話時間でランキングを作成
     sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
     
-    # ランキングを表示
-    embed = discord.Embed(title="総通話時間ランキング", color=discord.Color.gold())
-    
     if not sorted_members:
-        embed.add_field(name="ランキング", value="通話履歴はありません。", inline=False)
+        await interaction.response.send_message("通話履歴はありません。", ephemeral=True)
     else:
+        embed = discord.Embed(color=discord.Color.gold())
         ranking_text = ""
         for i, (member_id, total_seconds) in enumerate(sorted_members[:10], start=1):  # 上位10名を表示
             member = guild.get_member(member_id)
             if member:
                 formatted_time = format_duration(total_seconds)
                 ranking_text += f"{i}. {formatted_time} {member.display_name}\n"
-        embed.add_field(name="ランキング", value=ranking_text, inline=False)
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        embed.add_field(name="総通話時間ランキング", value=ranking_text, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /call_duration コマンド ---
 @bot.tree.command(name="call_duration", description="現在の通話経過時間")
