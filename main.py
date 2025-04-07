@@ -433,11 +433,11 @@ async def on_voice_state_update(member, before, after):
                         session_data["current_members"][m.id] = now
                     session_data["all_participants"].add(m.id)
 
-# --- /call_stats コマンド ---
-@bot.tree.command(name="call_stats", description="月間の通話の統計情報を表示します")
+# --- /monthly_stats コマンド ---
+@bot.tree.command(name="monthly_stats", description="月間の通話統計情報を表示します")
 @app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
 @app_commands.guild_only()
-async def call_stats(interaction: discord.Interaction, month: str = None):
+async def monthly_stats(interaction: discord.Interaction, month: str = None):
     if month is None:
         now = datetime.datetime.now(datetime.timezone.utc)
         month = now.strftime("%Y-%m")
@@ -477,28 +477,26 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /call_duration コマンド ---
-@bot.tree.command(name="call_duration", description="現在アクティブな通話（2人以上）の経過時間を表示します")
+@bot.tree.command(name="call_duration", description="現在の通話時間")
 @app_commands.guild_only()
 async def call_duration(interaction: discord.Interaction):
     guild_id = interaction.guild.id
     now = datetime.datetime.now(datetime.timezone.utc)
-    active_calls_found = False # アクティブな通話があったかどうかのフラグ
+    active_calls_found = False
 
-    load_voice_stats() # 念のため最新データを読み込む
+    load_voice_stats()
 
     embed = discord.Embed(color=discord.Color.blue())
     embed.set_author(name="現在の通話状況")
 
     for key, session_data in active_voice_sessions.items():
-        if key[0] == guild_id: # 現在のギルドのセッションか確認
+        if key[0] == guild_id:
             channel = bot.get_channel(key[1])
             if channel and isinstance(channel, discord.VoiceChannel):
-                # セッション開始からの経過時間を計算
                 duration_seconds = (now - session_data["session_start"]).total_seconds()
                 formatted_duration = format_duration(duration_seconds)
-                # チャンネルごとにフィールドを追加
                 embed.add_field(name=f"{channel.name}", value=formatted_duration, inline=False)
-                active_calls_found = True # アクティブな通話が見つかった
+                active_calls_found = True
 
     if not active_calls_found:
         await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
