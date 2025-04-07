@@ -494,16 +494,16 @@ async def call_ranking(interaction: discord.Interaction):
     sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
     
     if not sorted_members:
-        await interaction.response.send_message("通話履歴はありません。", ephemeral=True)
+        await interaction.response.send_message("通話履歴がないため、ランキングを表示できません。", ephemeral=True)
     else:
-        embed = discord.Embed(color=discord.Color.gold())
+        embed = discord.Embed(title="総通話時間ランキング", color=discord.Color.gold())
         ranking_text = ""
         for i, (member_id, total_seconds) in enumerate(sorted_members[:10], start=1):  # 上位10名を表示
             member = guild.get_member(member_id)
             if member:
                 formatted_time = format_duration(total_seconds)
                 ranking_text += f"{i}. {formatted_time} {member.display_name}\n"
-        embed.add_field(name="総通話時間ランキング", value=ranking_text, inline=False)
+        embed.add_field(name="", value=ranking_text, inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /call_duration コマンド ---
