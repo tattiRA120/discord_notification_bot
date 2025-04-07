@@ -545,7 +545,8 @@ async def help(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # 管理者用：通知先チャンネル変更コマンド
-@bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します", default_member_permissions=discord.Permissions(administrator=True))
+@bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(channel="通知を送信するチャンネル")
 @app_commands.guild_only()
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -564,7 +565,8 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
         await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。", ephemeral=True)
 
 # 管理者用：年間統計情報送信デバッグコマンド
-@bot.tree.command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします", default_member_permissions=discord.Permissions(administrator=True))
+@bot.tree.command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします")
+@app_commands.default_permissions(administrator=True)
 @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
 @app_commands.guild_only()
 async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
