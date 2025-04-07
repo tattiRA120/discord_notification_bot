@@ -458,7 +458,7 @@ async def monthly_stats(interaction: discord.Interaction, month: str = None):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /total_time コマンド ---
-@bot.tree.command(name="total_time", description="メンバーの通話総累計時間を表示します")
+@bot.tree.command(name="total_time", description="メンバーの累計通話時間を表示します")
 @app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
@@ -474,6 +474,37 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
         formatted_time = format_duration(total_seconds)
         embed.add_field(name="総通話時間", value=formatted_time, inline=False)
 
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# --- /total_call_ranking コマンド ---
+@bot.tree.command(name="total_call_ranking", description="累計通話時間ランキングを表示します")
+@app_commands.guild_only()
+async def call_ranking(interaction: discord.Interaction):
+    guild = interaction.guild
+    members = guild.members
+    
+    # メンバーの通話時間を取得
+    member_call_times = {}
+    for member in members:
+        member_call_times[member.id] = get_total_call_time(member.id)
+    
+    # 通話時間でランキングを作成
+    sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
+    
+    # ランキングを表示
+    embed = discord.Embed(title="通話時間ランキング", color=discord.Color.gold())
+    
+    if not sorted_members:
+        embed.add_field(name="ランキング", value="通話履歴はありません。", inline=False)
+    else:
+        ranking_text = ""
+        for i, (member_id, total_seconds) in enumerate(sorted_members[:10], start=1):  # 上位10名を表示
+            member = guild.get_member(member_id)
+            if member:
+                formatted_time = format_duration(total_seconds)
+                ranking_text += f"{i}. {member.display_name}: {formatted_time}\n"
+        embed.add_field(name="ランキング", value=ranking_text, inline=False)
+    
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /call_duration コマンド ---
