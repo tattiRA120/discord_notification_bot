@@ -477,7 +477,7 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /call_duration コマンド ---
-@bot.tree.command(name="call_duration", description="現在の通話時間")
+@bot.tree.command(name="call_duration", description="現在の通話経過時間")
 @app_commands.guild_only()
 async def call_duration(interaction: discord.Interaction):
     guild_id = interaction.guild.id
