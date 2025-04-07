@@ -458,7 +458,7 @@ async def monthly_stats(interaction: discord.Interaction, month: str = None):
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /total_time コマンド ---
-@bot.tree.command(name="total_time", description="メンバーの通話総累計時間を表示します")
+@bot.tree.command(name="total_time", description="メンバーの累計通話時間を表示します")
 @app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
@@ -475,6 +475,36 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
         embed.add_field(name="総通話時間", value=formatted_time, inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# --- /total_call_ranking コマンド ---
+@bot.tree.command(name="total_call_ranking", description="累計通話時間ランキングを表示します")
+@app_commands.guild_only()
+async def call_ranking(interaction: discord.Interaction):
+    guild = interaction.guild
+    members = guild.members
+    
+    # メンバーの通話時間を取得
+    member_call_times = {}
+    for member in members:
+        total_seconds = get_total_call_time(member.id)
+        if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを追加
+            member_call_times[member.id] = total_seconds
+    
+    # 通話時間でランキングを作成
+    sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
+    
+    if not sorted_members:
+        await interaction.response.send_message("通話履歴がないため、ランキングを表示できません。", ephemeral=True)
+    else:
+        embed = discord.Embed(title="総通話時間ランキング", color=discord.Color.gold())
+        ranking_text = ""
+        for i, (member_id, total_seconds) in enumerate(sorted_members[:10], start=1):  # 上位10名を表示
+            member = guild.get_member(member_id)
+            if member:
+                formatted_time = format_duration(total_seconds)
+                ranking_text += f"{i}. {formatted_time} {member.display_name}\n"
+        embed.add_field(name="", value=ranking_text, inline=False)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 # --- /call_duration コマンド ---
 @bot.tree.command(name="call_duration", description="現在の通話経過時間")
