@@ -533,6 +533,17 @@ async def call_duration(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+# --- /help コマンド ---
+@bot.tree.command(name="help", description="利用可能なコマンド一覧を表示します")
+@app_commands.guild_only()
+async def help(interaction: discord.Interaction):
+    commands = bot.tree.get_commands(guild=interaction.guild)
+    embed = discord.Embed(title="コマンド一覧", color=0x00ff00)
+    for command in commands:
+        if "管理者用" not in command.description:
+            embed.add_field(name=command.name, value=command.description, inline=False)
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
 # 管理者用：通知先チャンネル変更コマンド
 @bot.tree.command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します")
 @app_commands.describe(channel="通知を送信するチャンネル")
