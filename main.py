@@ -549,12 +549,7 @@ async def help(interaction: discord.Interaction):
 @app_commands.default_permissions(administrator=True)
 @app_commands.describe(channel="通知を送信するチャンネル")
 @app_commands.guild_only()
-async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
-    # 管理者権限のチェック
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("このコマンドは管理者専用です。", ephemeral=True)
-        return
-
+async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):   
     guild_id = str(interaction.guild.id)
     if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
         current_channel = bot.get_channel(server_notification_channels[guild_id])
@@ -570,11 +565,6 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
 @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
 @app_commands.guild_only()
 async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
-    # 管理者権限のチェック
-    if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("このコマンドは管理者専用です。", ephemeral=True)
-        return
-
     # 年度の指定がなければ現在の年度を使用
     if year is None:
         now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
