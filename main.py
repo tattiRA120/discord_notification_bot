@@ -15,7 +15,6 @@ load_dotenv()
 DB_FILE = "voice_stats.db"
 
 def init_db():
-    """データベースを初期化し、テーブルを作成する"""
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
 
@@ -74,12 +73,10 @@ call_sessions = {}
 CHANNELS_FILE = "channels.json"
 
 def save_channels_to_file():
-    """通知チャンネル設定をファイルに保存する"""
     with open(CHANNELS_FILE, "w") as f:
         json.dump(server_notification_channels, f)
 
 def load_channels_from_file():
-    """通知チャンネル設定をファイルから読み込む"""
     global server_notification_channels
     if os.path.exists(CHANNELS_FILE):
         with open(CHANNELS_FILE, "r") as f:
@@ -98,11 +95,9 @@ def load_channels_from_file():
     server_notification_channels = {str(guild_id): channel_id for guild_id, channel_id in server_notification_channels.items()}
 
 def convert_utc_to_jst(utc_time):
-    """UTC時刻をJSTに変換する"""
     return utc_time.astimezone(ZoneInfo("Asia/Tokyo"))
 
 def format_duration(duration_seconds):
-    """秒数を '00:00:00' 表記に変換する"""
     seconds = int(duration_seconds)
     hours, remainder = divmod(seconds, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -114,13 +109,11 @@ active_voice_sessions = {}
 # --- データベース操作関数 ---
 
 def get_db_connection():
-    """データベース接続を取得する"""
     conn = sqlite3.connect(DB_FILE)
     conn.row_factory = sqlite3.Row # カラム名でアクセスできるようにする
     return conn
 
 def update_member_monthly_stats(month_key, member_id, duration):
-    """メンバーの月間累計通話時間を更新または追加する"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -133,7 +126,6 @@ def update_member_monthly_stats(month_key, member_id, duration):
     conn.close()
 
 def record_voice_session_to_db(session_start, session_duration, participants):
-    """通話セッションをデータベースに記録する"""
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -158,7 +150,6 @@ def record_voice_session_to_db(session_start, session_duration, participants):
     conn.close()
 
 def get_total_call_time(member_id):
-    """指定されたメンバーの全期間の累計通話時間（秒）をデータベースから取得する"""
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -173,7 +164,6 @@ def get_total_call_time(member_id):
 
 # --- 10時間達成通知用ヘルパー関数 ---
 async def check_and_notify_milestone(member: discord.Member, guild: discord.Guild, before_total: float, after_total: float):
-    """累計通話時間が10時間の倍数を超えたかチェックし、通知する"""
     guild_id = str(guild.id)
     if guild_id not in server_notification_channels:
         return # 通知先チャンネルが設定されていない場合は何もしない
@@ -210,13 +200,6 @@ async def check_and_notify_milestone(member: discord.Member, guild: discord.Guil
 
 # --- 月間統計作成用ヘルパー関数 ---
 def get_monthly_statistics(guild, month: str):
-    """
-    指定された月（"YYYY-MM"）の統計情報を計算するヘルパー関数
-
-    :param guild: discord.Guild オブジェクト（メンバー名取得に使用）
-    :param month: "YYYY-MM" 形式の文字列
-    :return: (monthly_avg, longest_info, ranking_text) のタプル
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -290,12 +273,6 @@ def get_monthly_statistics(guild, month: str):
 
 # --- 月間統計Embed作成用ヘルパー関数 ---
 def create_monthly_stats_embed(guild, month: str):
-    """
-    月間統計情報のembedを作成する関数
-    :param guild: discord.Guild オブジェクト
-    :param month: "YYYY-MM" 形式の文字列
-    :return: (embed, month_display) タプル。統計情報がなければ embed は None
-    """
     try:
         year, mon = month.split("-")
         month_display = f"{year}年{mon}月"
@@ -317,10 +294,6 @@ def create_monthly_stats_embed(guild, month: str):
 
 # --- 年間統計作成用ヘルパー関数 ---
 def create_annual_stats_embed(guild, year: str):
-    """
-    year: "YYYY"形式の文字列
-    対象年度の各月の統計情報を集計し、全体の年間統計情報のembedを作成
-    """
     conn = get_db_connection()
     cursor = conn.cursor()
 
@@ -443,13 +416,6 @@ async def on_voice_state_update(member, before, after):
 
     # --- 2人以上通話状態の記録（各メンバーごとに個別記録＋全参加者リストを維持する処理） ---
 
-    """
-    active_voice_sessions は { (guild_id, channel_id): {
-         "session_start": datetime,
-         "current_members": { member_id: join_time, ... },
-         "all_participants": set([member_id, ...])
-    } }
-    """
     # 対象チャンネル（入室または退室対象）
     channel_before = before.channel
     channel_after = after.channel
@@ -535,7 +501,6 @@ async def on_voice_state_update(member, before, after):
 @app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
 @app_commands.guild_only()
 async def monthly_stats(interaction: discord.Interaction, month: str = None):
-    """月間の通話統計情報を表示する"""
     if month is None:
         now = datetime.datetime.now(datetime.timezone.utc)
         month = now.strftime("%Y-%m")
@@ -560,7 +525,6 @@ async def monthly_stats(interaction: discord.Interaction, month: str = None):
 @app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
-    """メンバーの累計通話時間を表示する"""
     member = member or interaction.user
     total_seconds = get_total_call_time(member.id)
 
@@ -579,7 +543,6 @@ async def total_time(interaction: discord.Interaction, member: discord.Member = 
 @bot.tree.command(name="total_call_ranking", description="累計通話時間ランキングを表示します")
 @app_commands.guild_only()
 async def call_ranking(interaction: discord.Interaction):
-    """累計通話時間ランキングを表示する"""
     guild = interaction.guild
     members = guild.members
 
@@ -610,7 +573,6 @@ async def call_ranking(interaction: discord.Interaction):
 @bot.tree.command(name="call_duration", description="現在の通話経過時間")
 @app_commands.guild_only()
 async def call_duration(interaction: discord.Interaction):
-    """現在の通話経過時間を表示する"""
     guild_id = interaction.guild.id
     now = datetime.datetime.now(datetime.timezone.utc)
     active_calls_found = False
@@ -636,7 +598,6 @@ async def call_duration(interaction: discord.Interaction):
 @bot.tree.command(name="help", description="利用可能なコマンド一覧を表示します")
 @app_commands.guild_only()
 async def help(interaction: discord.Interaction):
-    """利用可能なコマンド一覧を表示する"""
     commands = bot.tree.get_commands(guild=interaction.guild)
     embed = discord.Embed(title="コマンド一覧", color=0x00ff00)
     for command in commands:
@@ -651,7 +612,6 @@ async def help(interaction: discord.Interaction):
 @app_commands.describe(channel="通知を送信するチャンネル")
 @app_commands.guild_only()
 async def changesendchannel(interaction: discord.Interaction, channel: discord.TextChannel):
-    """通知先のチャンネルを変更する（管理者用）"""
     guild_id = str(interaction.guild.id)
     if guild_id in server_notification_channels and server_notification_channels[guild_id] == channel.id:
         current_channel = bot.get_channel(server_notification_channels[guild_id])
@@ -667,7 +627,6 @@ async def changesendchannel(interaction: discord.Interaction, channel: discord.T
 @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
 @app_commands.guild_only()
 async def debug_annual_stats(interaction: discord.Interaction, year: str = None):
-    """年間統計情報送信をデバッグする（管理者用）"""
     # 年度の指定がなければ現在の年度を使用
     if year is None:
         now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
@@ -682,7 +641,6 @@ async def debug_annual_stats(interaction: discord.Interaction, year: str = None)
 # --- 毎日18時のトリガータスク ---
 @tasks.loop(time=datetime.time(hour=18, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
 async def scheduled_stats():
-    """毎日18時に定期実行される統計情報送信タスク"""
     now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
 
     # 前月の統計情報送信（毎月1日）
@@ -717,7 +675,6 @@ async def scheduled_stats():
 # --- 起動時処理 ---
 @bot.event
 async def on_ready():
-    """ボット起動時の処理"""
     load_channels_from_file()
 
     print(f'ログインしました: {bot.user.name}')
