@@ -59,10 +59,9 @@ init_db()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 
 intents = discord.Intents.default()
-intents.voice_states = True  # ボイスチャンネルの変更イベントを有効にする
-intents.members = True       # メンバー情報の取得を許可する
-intents.message_content = True  # メッセージ内容のアクセスを許可
-
+intents.voice_states = True
+intents.members = True
+intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # サーバーごとの通知先チャンネルIDを保存する辞書
@@ -470,11 +469,11 @@ async def on_voice_state_update(member, before, after):
                 duration = (now - join_time).total_seconds()
 
                 # --- 10時間達成チェック ---
-                before_total = get_total_call_time(member.id) # 更新前の累計時間を取得 (DBから)
+                before_total = get_total_call_time(member.id)
                 month_key = join_time.strftime("%Y-%m")
-                update_member_monthly_stats(month_key, member.id, duration) # 統計を更新 (DBへ)
-                after_total = get_total_call_time(member.id) # 更新後の累計時間を取得 (DBから)
-                await check_and_notify_milestone(member, member.guild, before_total, after_total) # 通知チェック
+                update_member_monthly_stats(month_key, member.id, duration)
+                after_total = get_total_call_time(member.id)
+                await check_and_notify_milestone(member, member.guild, before_total, after_total)
                 # --- ここまで ---
 
             # もし退室後、チャンネル内人数が1人以下ならセッション終了処理を実施
@@ -485,22 +484,22 @@ async def on_voice_state_update(member, before, after):
                     d = (now - join_time).total_seconds()
 
                     # --- 10時間達成チェック (セッション終了時) ---
-                    m_obj = member.guild.get_member(m_id) # Memberオブジェクトを取得
+                    m_obj = member.guild.get_member(m_id)
                     if m_obj:
-                        before_total_sess_end = get_total_call_time(m_id) # DBから取得
+                        before_total_sess_end = get_total_call_time(m_id)
                         month_key = join_time.strftime("%Y-%m")
-                        update_member_monthly_stats(month_key, m_id, d) # DBへ更新
-                        after_total_sess_end = get_total_call_time(m_id) # DBから取得
+                        update_member_monthly_stats(month_key, m_id, d)
+                        after_total_sess_end = get_total_call_time(m_id)
                         await check_and_notify_milestone(m_obj, member.guild, before_total_sess_end, after_total_sess_end)
-                    else: # Memberオブジェクトが取得できない場合は統計更新のみ
+                    else:
                          month_key = join_time.strftime("%Y-%m")
-                         update_member_monthly_stats(month_key, m_id, d) # DBへ更新
+                         update_member_monthly_stats(month_key, m_id, d)
                     # --- ここまで ---
 
-                    session_data["current_members"].pop(m_id) # current_membersから削除
+                    session_data["current_members"].pop(m_id)
 
                 overall_duration = (now - session_data["session_start"]).total_seconds()
-                record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"])) # セッション全体の記録 (DBへ)
+                record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
                 active_voice_sessions.pop(key, None)
 
     # 入室処理（after.channelに入室した場合）
@@ -562,8 +561,8 @@ async def monthly_stats(interaction: discord.Interaction, month: str = None):
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
     """メンバーの累計通話時間を表示する"""
-    member = member or interaction.user  # デフォルトはコマンド送信者
-    total_seconds = get_total_call_time(member.id) # ヘルパー関数を使用
+    member = member or interaction.user
+    total_seconds = get_total_call_time(member.id)
 
     embed = discord.Embed(color=discord.Color.blue())
     embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
