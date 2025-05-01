@@ -4,7 +4,7 @@ from discord.ext import commands, tasks
 import datetime
 import os
 import json
-import sqlite3
+import aiosqlite
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 
@@ -14,12 +14,12 @@ load_dotenv()
 # データベースファイル名
 DB_FILE = "voice_stats.db"
 
-def init_db():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
+async def init_db():
+    conn = await aiosqlite.connect(DB_FILE)
+    cursor = await conn.cursor()
 
     # sessions テーブル
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             month_key TEXT NOT NULL,
@@ -29,7 +29,7 @@ def init_db():
     """)
 
     # session_participants テーブル
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS session_participants (
             session_id INTEGER,
             member_id TEXT NOT NULL,
@@ -39,7 +39,7 @@ def init_db():
     """)
 
     # member_monthly_stats テーブル
-    cursor.execute("""
+    await cursor.execute("""
         CREATE TABLE IF NOT EXISTS member_monthly_stats (
             month_key TEXT NOT NULL,
             member_id TEXT NOT NULL,
@@ -48,11 +48,20 @@ def init_db():
         )
     """)
 
-    conn.commit()
-    conn.close()
+    # インデックス
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_month_key ON sessions (month_key)")
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_session_id ON session_participants (session_id)")
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_member_id ON session_participants (member_id)")
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_monthly_stats_month_key ON member_monthly_stats (month_key)")
+    await cursor.execute("CREATE INDEX IF NOT EXISTS idx_member_monthly_stats_member_id ON member_monthly_stats (member_id)")
+
+    await conn.commit()
+    await conn.close()
 
 # データベース初期化をボット起動時に行う
-init_db()
+# 起動時に非同期関数を呼び出すため、asyncio.runを使用
+import asyncio
+asyncio.run(init_db())
 
 # 環境変数からトークンを取得
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
@@ -108,32 +117,32 @@ active_voice_sessions = {}
 
 # --- データベース操作関数 ---
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_FILE)
-    conn.row_factory = sqlite3.Row # カラム名でアクセスできるようにする
+async def get_db_connection():
+    conn = await aiosqlite.connect(DB_FILE)
+    conn.row_factory = aiosqlite.Row # カラム名でアクセスできるようにする
     return conn
 
-def update_member_monthly_stats(month_key, member_id, duration):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+async def update_member_monthly_stats(month_key, member_id, duration):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
+    await cursor.execute("""
         INSERT INTO member_monthly_stats (month_key, member_id, total_duration)
         VALUES (?, ?, ?)
         ON CONFLICT(month_key, member_id) DO UPDATE SET
             total_duration = total_duration + excluded.total_duration
     """, (month_key, str(member_id), duration))
-    conn.commit()
-    conn.close()
+    await conn.commit()
+    await conn.close()
 
-def record_voice_session_to_db(session_start, session_duration, participants):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+async def record_voice_session_to_db(session_start, session_duration, participants):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
 
     month_key = session_start.strftime("%Y-%m")
     start_time_iso = session_start.isoformat()
 
     # sessions テーブルにセッションを挿入
-    cursor.execute("""
+    await cursor.execute("""
         INSERT INTO sessions (month_key, start_time, duration)
         VALUES (?, ?, ?)
     """, (month_key, start_time_iso, session_duration))
@@ -141,24 +150,24 @@ def record_voice_session_to_db(session_start, session_duration, participants):
 
     # session_participants テーブルに参加者を挿入
     participant_data = [(session_id, str(p)) for p in participants]
-    cursor.executemany("""
+    await cursor.executemany("""
         INSERT INTO session_participants (session_id, member_id)
         VALUES (?, ?)
     """, participant_data)
 
-    conn.commit()
-    conn.close()
+    await conn.commit()
+    await conn.close()
 
-def get_total_call_time(member_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
+async def get_total_call_time(member_id):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
+    await cursor.execute("""
         SELECT SUM(total_duration) as total
         FROM member_monthly_stats
         WHERE member_id = ?
     """, (str(member_id),)) # member_idは文字列として保存されているため変換
-    result = cursor.fetchone()
-    conn.close()
+    result = await cursor.fetchone()
+    await conn.close()
     # 結果がNoneの場合（通話履歴がない場合）は0を返す
     return result['total'] if result and result['total'] is not None else 0
 
@@ -199,25 +208,25 @@ async def check_and_notify_milestone(member: discord.Member, guild: discord.Guil
             print(f"通知送信中にエラーが発生しました: {e}")
 
 # --- 月間統計作成用ヘルパー関数 ---
-def get_monthly_statistics(guild, month: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+async def get_monthly_statistics(guild, month: str):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
 
     # 月間セッションの取得
-    cursor.execute("""
+    await cursor.execute("""
         SELECT start_time, duration, id FROM sessions
         WHERE month_key = ?
     """, (month,))
-    sessions_data = cursor.fetchall()
+    sessions_data = await cursor.fetchall()
 
     sessions = []
     for session_row in sessions_data:
         # 参加者を取得
-        cursor.execute("""
+        await cursor.execute("""
             SELECT member_id FROM session_participants
             WHERE session_id = ?
         """, (session_row['id'],))
-        participants_data = cursor.fetchall()
+        participants_data = await cursor.fetchall()
         participants = [int(p['member_id']) for p in participants_data] # member_idをintに戻す
 
         sessions.append({
@@ -227,14 +236,14 @@ def get_monthly_statistics(guild, month: str):
         })
 
     # メンバー別月間累計時間の取得
-    cursor.execute("""
+    await cursor.execute("""
         SELECT member_id, total_duration FROM member_monthly_stats
         WHERE month_key = ?
     """, (month,))
-    member_stats_data = cursor.fetchall()
+    member_stats_data = await cursor.fetchall()
     member_stats = {m['member_id']: m['total_duration'] for m in member_stats_data}
 
-    conn.close()
+    await conn.close()
 
     # 平均通話時間の計算
     if sessions:
@@ -272,14 +281,14 @@ def get_monthly_statistics(guild, month: str):
     return monthly_avg, longest_info, ranking_text
 
 # --- 月間統計Embed作成用ヘルパー関数 ---
-def create_monthly_stats_embed(guild, month: str):
+async def create_monthly_stats_embed(guild, month: str):
     try:
         year, mon = month.split("-")
         month_display = f"{year}年{mon}月"
     except Exception:
         month_display = month
 
-    monthly_avg, longest_info, ranking_text = get_monthly_statistics(guild, month)
+    monthly_avg, longest_info, ranking_text = await get_monthly_statistics(guild, month)
 
     # 統計情報が取得できたかチェック
     if monthly_avg == 0 and longest_info == "なし" and ranking_text == "なし":
@@ -293,25 +302,25 @@ def create_monthly_stats_embed(guild, month: str):
     return embed, month_display
 
 # --- 年間統計作成用ヘルパー関数 ---
-def create_annual_stats_embed(guild, year: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
+async def create_annual_stats_embed(guild, year: str):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
 
     # 対象年度のセッションを全て取得
-    cursor.execute("""
+    await cursor.execute("""
         SELECT start_time, duration, id FROM sessions
         WHERE strftime('%Y', start_time) = ?
     """, (year,))
-    sessions_data = cursor.fetchall()
+    sessions_data = await cursor.fetchall()
 
     sessions_all = []
     for session_row in sessions_data:
          # 参加者を取得
-        cursor.execute("""
+        await cursor.execute("""
             SELECT member_id FROM session_participants
             WHERE session_id = ?
         """, (session_row['id'],))
-        participants_data = cursor.fetchall()
+        participants_data = await cursor.fetchall()
         participants = [int(p['member_id']) for p in participants_data] # member_idをintに戻す
 
         sessions_all.append({
@@ -321,16 +330,16 @@ def create_annual_stats_embed(guild, year: str):
         })
 
     # 対象年度のメンバー別累計時間を全て取得
-    cursor.execute("""
+    await cursor.execute("""
         SELECT member_id, SUM(total_duration) as total_duration
         FROM member_monthly_stats
         WHERE strftime('%Y', month_key) = ?
         GROUP BY member_id
     """, (year,))
-    members_total_data = cursor.fetchall()
+    members_total_data = await cursor.fetchall()
     members_total = {m['member_id']: m['total_duration'] for m in members_total_data}
 
-    conn.close()
+    await conn.close()
 
     year_display = f"{year}年"
     if not sessions_all:
@@ -435,10 +444,10 @@ async def on_voice_state_update(member, before, after):
                 duration = (now - join_time).total_seconds()
 
                 # --- 10時間達成チェック ---
-                before_total = get_total_call_time(member.id)
+                before_total = await get_total_call_time(member.id)
                 month_key = join_time.strftime("%Y-%m")
-                update_member_monthly_stats(month_key, member.id, duration)
-                after_total = get_total_call_time(member.id)
+                await update_member_monthly_stats(month_key, member.id, duration)
+                after_total = await get_total_call_time(member.id)
                 await check_and_notify_milestone(member, member.guild, before_total, after_total)
                 # --- ここまで ---
 
@@ -452,20 +461,20 @@ async def on_voice_state_update(member, before, after):
                     # --- 10時間達成チェック (セッション終了時) ---
                     m_obj = member.guild.get_member(m_id)
                     if m_obj:
-                        before_total_sess_end = get_total_call_time(m_id)
+                        before_total_sess_end = await get_total_call_time(m_id)
                         month_key = join_time.strftime("%Y-%m")
-                        update_member_monthly_stats(month_key, m_id, d)
-                        after_total_sess_end = get_total_call_time(m_id)
+                        await update_member_monthly_stats(month_key, m_id, d)
+                        after_total_sess_end = await get_total_call_time(m_id)
                         await check_and_notify_milestone(m_obj, member.guild, before_total_sess_end, after_total_sess_end)
                     else:
                          month_key = join_time.strftime("%Y-%m")
-                         update_member_monthly_stats(month_key, m_id, d)
+                         await update_member_monthly_stats(month_key, m_id, d)
                     # --- ここまで ---
 
                     session_data["current_members"].pop(m_id)
 
                 overall_duration = (now - session_data["session_start"]).total_seconds()
-                record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
+                await record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
                 active_voice_sessions.pop(key, None)
 
     # 入室処理（after.channelに入室した場合）
@@ -512,7 +521,7 @@ async def monthly_stats(interaction: discord.Interaction, month: str = None):
         await interaction.response.send_message("指定された月の形式が正しくありません。形式は YYYY-MM で指定してください。", ephemeral=True)
         return
 
-    embed, month_display = create_monthly_stats_embed(interaction.guild, month)
+    embed, month_display = await create_monthly_stats_embed(interaction.guild, month)
 
     if embed is None:
         await interaction.response.send_message(f"{month_display}は通話統計情報が記録されていません", ephemeral=True)
@@ -526,7 +535,7 @@ async def monthly_stats(interaction: discord.Interaction, month: str = None):
 @app_commands.guild_only()
 async def total_time(interaction: discord.Interaction, member: discord.Member = None):
     member = member or interaction.user
-    total_seconds = get_total_call_time(member.id)
+    total_seconds = await get_total_call_time(member.id)
 
     embed = discord.Embed(color=discord.Color.blue())
     embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
@@ -549,7 +558,7 @@ async def call_ranking(interaction: discord.Interaction):
     # メンバーの通話時間を取得
     member_call_times = {}
     for member in members:
-        total_seconds = get_total_call_time(member.id)
+        total_seconds = await get_total_call_time(member.id)
         if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを追加
             member_call_times[member.id] = total_seconds
 
@@ -601,8 +610,6 @@ async def help(interaction: discord.Interaction):
     commands = bot.tree.get_commands(guild=interaction.guild)
     embed = discord.Embed(title="コマンド一覧", color=0x00ff00)
     for command in commands:
-        # 管理者用コマンドを除外する場合はここに条件を追加
-        # if "管理者用" not in command.description:
         embed.add_field(name=command.name, value=command.description, inline=False)
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -632,7 +639,7 @@ async def debug_annual_stats(interaction: discord.Interaction, year: str = None)
         now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
         year = str(now.year)
 
-    embed, display = create_annual_stats_embed(interaction.guild, year)
+    embed, display = await create_annual_stats_embed(interaction.guild, year)
     if embed:
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
@@ -653,7 +660,7 @@ async def scheduled_stats():
             guild = bot.get_guild(int(guild_id))
             channel = bot.get_channel(channel_id)
             if guild and channel:
-                embed, month_display = create_monthly_stats_embed(guild, previous_month)
+                embed, month_display = await create_monthly_stats_embed(guild, previous_month)
                 if embed:
                     await channel.send(embed=embed)
                 else:
@@ -666,7 +673,7 @@ async def scheduled_stats():
             guild = bot.get_guild(int(guild_id))
             channel = bot.get_channel(channel_id)
             if guild and channel:
-                embed, year_display = create_annual_stats_embed(guild, year_str)
+                embed, year_display = await create_annual_stats_embed(guild, year_str)
                 if embed:
                     await channel.send(embed=embed)
                 else:
