@@ -123,8 +123,8 @@ active_voice_sessions = {}
 # 2人以上が通話中のチャンネルを追跡するセット
 active_status_channels = set()
 
-# --- ステータス更新タスク ---
-@tasks.loop(seconds=10)
+# --- ステータス通話時間更新タスク ---
+@tasks.loop(seconds=15)
 async def update_call_status_task():
     if active_status_channels:
         # active_status_channelsからステータスに表示するチャンネルを選択
