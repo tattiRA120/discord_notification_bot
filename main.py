@@ -716,7 +716,12 @@ async def scheduled_stats():
                 if embed:
                     await channel.send(embed=embed)
                 else:
-                    await channel.send(f"{month_display}は通話統計情報が記録されていません")
+                    embed = discord.Embed(
+                        title=f"【前月の通話統計】",
+                        description=f"{month_display}は通話記録がありませんでした",
+                        color=discord.Color.orange()
+                    )
+                    await channel.send(embed=embed)
 
     # 年間統計情報送信（毎年12月31日）
     if now.month == 12 and now.day == 31:
@@ -729,7 +734,12 @@ async def scheduled_stats():
                 if embed:
                     await channel.send(embed=embed)
                 else:
-                    await channel.send(f"{year_display}の通話統計情報が記録されていません")
+                    embed = discord.Embed(
+                        title=f"【年間の通話統計】",
+                        description=f"{month_display}は通話記録がありませんでした",
+                        color=discord.Color.orange()
+                    )
+                    await channel.send(embed=embed)
 
 # --- 起動時処理 ---
 @bot.event
