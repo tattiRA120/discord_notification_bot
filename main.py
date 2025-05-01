@@ -112,8 +112,43 @@ def format_duration(duration_seconds):
     minutes, seconds = divmod(remainder, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+# --- 二人以上の通話時間計算ヘルパー関数 ---
+def calculate_call_duration_seconds(start_time):
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return (now - start_time).total_seconds()
+
 # (guild_id, channel_id) をキーに、現在進行中の「2人以上通話セッション」を記録する
 active_voice_sessions = {}
+
+# 2人以上が通話中のチャンネルを追跡するセット
+active_status_channels = set()
+
+# --- ステータス通話時間更新タスク ---
+@tasks.loop(seconds=15)
+async def update_call_status_task():
+    if active_status_channels:
+        # active_status_channelsからステータスに表示するチャンネルを選択
+        channel_key_to_display = next(iter(active_status_channels))
+        guild_id, channel_id = channel_key_to_display
+        guild = bot.get_guild(guild_id)
+        channel = bot.get_channel(channel_id)
+
+        if guild and channel and channel_key_to_display in active_voice_sessions:
+            # 選択したチャンネルの通話時間を計算し、ステータスに設定
+            session_data = active_voice_sessions[channel_key_to_display]
+            duration_seconds = calculate_call_duration_seconds(session_data["session_start"])
+            formatted_duration = format_duration(duration_seconds)
+            activity = discord.CustomActivity(name=f"{channel.name}: {formatted_duration}")
+            await bot.change_presence(activity=activity)
+        else:
+            # チャンネルが見つからない、またはactive_voice_sessionsにない場合はセットから削除しステータスをクリア
+            active_status_channels.discard(channel_key_to_display)
+            if not active_status_channels:
+                 await bot.change_presence(activity=None)
+    else:
+        # 2人以上の通話がない場合はステータスをクリア
+        await bot.change_presence(activity=None)
+
 
 # --- データベース操作関数 ---
 
@@ -477,6 +512,15 @@ async def on_voice_state_update(member, before, after):
                 await record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
                 active_voice_sessions.pop(key, None)
 
+                # チャンネルの人数が1人以下になったら active_status_channels から削除
+                if channel_before is not None and len(channel_before.members) < 2:
+                    active_status_channels.discard(key)
+                    # 2人以上の通話がすべて終了した場合、ステータス更新タスクを停止しステータスをクリア
+                    if not active_status_channels and update_call_status_task.is_running():
+                        update_call_status_task.stop()
+                        await bot.change_presence(activity=None)
+
+
     # 入室処理（after.channelに入室した場合）
     if channel_after is not None:
         key = (guild_id, channel_after.id)
@@ -496,6 +540,14 @@ async def on_voice_state_update(member, before, after):
                     if m.id not in session_data["current_members"]:
                         session_data["current_members"][m.id] = now
                     session_data["all_participants"].add(m.id)
+
+            # チャンネルの人数が2人以上になったら active_status_channels に追加
+            if key not in active_status_channels:
+                active_status_channels.add(key)
+                # 初めて2人以上の通話が始まった場合、ステータス更新タスクを開始
+                if not update_call_status_task.is_running():
+                    update_call_status_task.start()
+
         else:
             # 人数が2人未満の場合は、既にセッションが存在する場合のみ更新する
             if key in active_voice_sessions:
@@ -593,7 +645,7 @@ async def call_duration(interaction: discord.Interaction):
         if key[0] == guild_id:
             channel = bot.get_channel(key[1])
             if channel and isinstance(channel, discord.VoiceChannel):
-                duration_seconds = (now - session_data["session_start"]).total_seconds()
+                duration_seconds = calculate_call_duration_seconds(session_data["session_start"])
                 formatted_duration = format_duration(duration_seconds)
                 embed.add_field(name=f"{channel.name}", value=formatted_duration, inline=False)
                 active_calls_found = True
@@ -664,7 +716,12 @@ async def scheduled_stats():
                 if embed:
                     await channel.send(embed=embed)
                 else:
-                    await channel.send(f"{month_display}は通話統計情報が記録されていません")
+                    embed = discord.Embed(
+                        title=f"【前月の通話統計】",
+                        description=f"{month_display}は通話記録がありませんでした",
+                        color=discord.Color.orange()
+                    )
+                    await channel.send(embed=embed)
 
     # 年間統計情報送信（毎年12月31日）
     if now.month == 12 and now.day == 31:
@@ -677,7 +734,12 @@ async def scheduled_stats():
                 if embed:
                     await channel.send(embed=embed)
                 else:
-                    await channel.send(f"{year_display}の通話統計情報が記録されていません")
+                    embed = discord.Embed(
+                        title=f"【年間の通話統計】",
+                        description=f"{month_display}は通話記録がありませんでした",
+                        color=discord.Color.orange()
+                    )
+                    await channel.send(embed=embed)
 
 # --- 起動時処理 ---
 @bot.event
@@ -698,7 +760,7 @@ async def on_ready():
         for cmd in global_cmds:
             bot.tree.add_command(cmd, guild=guild)
         print(f'接続中のサーバー: {guild.name} (ID: {guild.id})')
-        await bot.tree.sync(guild=guild)
+    await bot.tree.sync(guild=guild)
 
     scheduled_stats.start()
 
