@@ -26,6 +26,20 @@ def backup_database():
         con.close()
         print(f"データベースのバックアップが完了しました: {backup_file}")
 
+        # 古いバックアップファイルを削除
+        backup_files = [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR) if f.startswith("voice_stats_") and f.endswith(".db")]
+        backup_files.sort(key=lambda x: os.path.getmtime(x)) # 最終更新時間でソート
+
+        # 最新の7個以外のファイルを削除
+        if len(backup_files) > 7:
+            old_files = backup_files[:-7]
+            for old_file in old_files:
+                try:
+                    os.remove(old_file)
+                    print(f"古いバックアップファイルを削除しました: {old_file}")
+                except OSError as e:
+                    print(f"古いバックアップファイルの削除中にエラーが発生しました: {e}")
+
     except sqlite3.Error as e:
         print(f"データベースのバックアップ中にエラーが発生しました: {e}")
     except Exception as e:
