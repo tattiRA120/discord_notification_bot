@@ -1,0 +1,1 @@
+0 3 * * * /usr/bin/env python3 /home/tattira120/discord_bot_test/discord_notification_bot/backup_db.py
