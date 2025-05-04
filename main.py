@@ -7,6 +7,7 @@ import json
 import aiosqlite
 from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
+import asyncio
 
 # .envファイルの環境変数を読み込む
 load_dotenv()
@@ -48,6 +49,15 @@ async def init_db():
         )
     """)
 
+    # settings テーブル
+    await cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            guild_id TEXT PRIMARY KEY,
+            lonely_timeout_minutes INTEGER DEFAULT 180, -- 3時間を分に変換
+            reaction_wait_minutes INTEGER DEFAULT 5
+        )
+    """)
+
     # インデックス
     await cursor.execute("CREATE INDEX IF NOT EXISTS idx_sessions_month_key ON sessions (month_key)")
     await cursor.execute("CREATE INDEX IF NOT EXISTS idx_session_participants_session_id ON session_participants (session_id)")
@@ -60,7 +70,6 @@ async def init_db():
 
 # データベース初期化をボット起動時に行う
 # 起動時に非同期関数を呼び出すため、asyncio.runを使用
-import asyncio
 asyncio.run(init_db())
 
 # 環境変数からトークンを取得
@@ -80,6 +89,15 @@ call_sessions = {}
 
 # 通知チャンネル設定を保存するファイルのパス
 CHANNELS_FILE = "channels.json"
+
+# 一人以下の状態になった通話チャンネルとその時刻、メンバー、関連タスクを記録する辞書
+# キー: (guild_id, voice_channel_id), 値: {"start_time": datetimeオブジェクト, "member_id": int, "task": asyncio.Task}
+lonely_voice_channels = {}
+
+# 寝落ち確認メッセージとそれに対するリアクション監視タスクを記録する辞書
+# キー: message_id, 値: {"member_id": int, "task": asyncio.Task}
+sleep_check_messages = {}
+
 
 def save_channels_to_file():
     with open(CHANNELS_FILE, "w") as f:
@@ -205,6 +223,47 @@ async def get_total_call_time(member_id):
     await conn.close()
     # 結果がNoneの場合（通話履歴がない場合）は0を返す
     return result['total'] if result and result['total'] is not None else 0
+
+async def get_guild_settings(guild_id):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
+    await cursor.execute("SELECT * FROM settings WHERE guild_id = ?", (str(guild_id),))
+    settings = await cursor.fetchone()
+    await conn.close()
+    if settings:
+        return settings
+    else:
+        # 設定がない場合はデフォルト値を返す (3時間 = 180分)
+        return {"guild_id": str(guild_id), "lonely_timeout_minutes": 180, "reaction_wait_minutes": 5}
+
+async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_wait_minutes=None):
+    conn = await get_db_connection()
+    cursor = await conn.cursor()
+    settings = await get_guild_settings(guild_id)
+
+    update_sql = "INSERT INTO settings (guild_id, lonely_timeout_minutes, reaction_wait_minutes) VALUES (?, ?, ?) ON CONFLICT(guild_id) DO UPDATE SET "
+    params = [str(guild_id)]
+    set_clauses = []
+
+    if lonely_timeout_minutes is not None:
+        set_clauses.append("lonely_timeout_minutes = ?")
+        params.append(lonely_timeout_minutes)
+    else:
+        params.append(settings["lonely_timeout_minutes"])
+
+    if reaction_wait_minutes is not None:
+        set_clauses.append("reaction_wait_minutes = ?")
+        params.append(reaction_wait_minutes)
+    else:
+        params.append(settings["reaction_wait_minutes"])
+
+    update_sql += ", ".join(set_clauses)
+    params.extend(params[1:])
+
+    await cursor.execute(update_sql, params)
+    await conn.commit()
+    await conn.close()
+
 
 # --- 10時間達成通知用ヘルパー関数 ---
 async def check_and_notify_milestone(member: discord.Member, guild: discord.Guild, before_total: float, after_total: float):
@@ -413,11 +472,146 @@ async def create_annual_stats_embed(guild, year: str):
     embed.add_field(name="年間: 通話時間ランキング", value=ranking_text, inline=False)
     return embed, year_display
 
+# --- 寝落ち確認とミュート処理 ---
+async def check_lonely_channel(guild_id: int, channel_id: int, member_id: int):
+    await asyncio.sleep(await get_lonely_timeout_seconds(guild_id)) # 設定された時間待機
+
+    # 再度チャンネルの状態を確認
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        return
+    channel = guild.get_channel(channel_id)
+    if not channel or len(channel.members) > 1 or (len(channel.members) == 1 and channel.members[0].id != member_id):
+        # チャンネルが存在しない、複数人になった、または別の人が一人になった場合は処理しない
+        if (guild_id, channel_id) in lonely_voice_channels:
+             lonely_voice_channels.pop((guild_id, channel_id)) # 状態管理から削除
+        return
+
+    # まだ一人以下の状態の場合、寝落ち確認メッセージを送信
+    if str(guild_id) in server_notification_channels:
+        notification_channel_id = server_notification_channels[str(guild_id)]
+        notification_channel = bot.get_channel(notification_channel_id)
+        if notification_channel:
+            lonely_member = guild.get_member(member_id)
+            if lonely_member:
+                message_content = f"{lonely_member.mention} さん、{channel.name} で一人になってから長い時間が経ちました。\n寝落ちしていませんか？反応がない場合、ミュートします。\nこのメッセージに :white_check_mark: で反応してください。"
+                try:
+                    message = await notification_channel.send(message_content)
+                    await message.add_reaction("✅") # :white_check_mark: 絵文字を追加
+
+                    # リアクション監視タスクを開始
+                    reaction_task = asyncio.create_task(wait_for_reaction(message.id, member_id, guild_id, channel_id))
+                    sleep_check_messages[message.id] = {"member_id": member_id, "task": reaction_task}
+
+                except discord.Forbidden:
+                    print(f"エラー: チャンネル {notification_channel.name} ({notification_channel_id}) への送信権限がありません。")
+                except Exception as e:
+                    print(f"寝落ち確認メッセージ送信中にエラーが発生しました: {e}")
+            else:
+                 # メンバーが見つからない場合も状態管理から削除
+                 if (guild_id, channel_id) in lonely_voice_channels:
+                    lonely_voice_channels.pop((guild_id, channel_id))
+        else:
+            print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
+            # 通知チャンネルがない場合も状態管理から削除
+            if (guild_id, channel_id) in lonely_voice_channels:
+                lonely_voice_channels.pop((guild_id, channel_id))
+    else:
+        print(f"ギルド {guild.name} ({guild_id}) の通知チャンネルが設定されていません。寝落ち確認メッセージを送信できません。")
+        # 通知チャンネルが設定されていない場合も状態管理から削除
+        if (guild_id, channel_id) in lonely_voice_channels:
+            lonely_voice_channels.pop((guild_id, channel_id))
+
+
+async def wait_for_reaction(message_id: int, member_id: int, guild_id: int, channel_id: int):
+    settings = await get_guild_settings(guild_id)
+    wait_seconds = settings["reaction_wait_minutes"] * 60
+
+    try:
+        # 指定された絵文字、ユーザーからのリアクションを待つ
+        def check(reaction, user):
+            return user.id == member_id and str(reaction.emoji) == '✅' and reaction.message.id == message_id
+
+        await bot.wait_for('reaction_add', timeout=wait_seconds, check=check)
+        print(f"メンバー {member_id} がメッセージ {message_id} に反応しました。ミュート処理をキャンセルします。")
+
+    except asyncio.TimeoutError:
+        # タイムアウトした場合、ミュート処理を実行
+        print(f"メッセージ {message_id} への反応がありませんでした。メンバー {member_id} をミュートします。")
+        guild = bot.get_guild(guild_id)
+        if guild:
+            member = guild.get_member(member_id)
+            if member:
+                try:
+                    await member.edit(mute=True, deafen=True)
+                    print(f"メンバー {member.display_name} ({member_id}) をミュートしました。")
+                except discord.Forbidden:
+                    print(f"エラー: メンバー {member.display_name} ({member_id}) をミュートする権限がありません。")
+                except Exception as e:
+                    print(f"メンバーミュート中にエラーが発生しました: {e}")
+            else:
+                print(f"メンバー {member_id} が見つかりませんでした。")
+        else:
+            print(f"ギルド {guild_id} が見つかりませんでした。")
+
+    finally:
+        # 処理が完了したら、一時的な記録から削除
+        if message_id in sleep_check_messages:
+            sleep_check_messages.pop(message_id)
+        # チャンネルの状態管理からも削除（ミュートされたか反応があったかで一人以下の状態は終了とみなす）
+        if (guild_id, channel_id) in lonely_voice_channels:
+             lonely_voice_channels.pop((guild_id, channel_id))
+
+
+async def get_lonely_timeout_seconds(guild_id):
+    settings = await get_guild_settings(guild_id)
+    return settings["lonely_timeout_minutes"] * 60 # 分を秒に変換
+
 # --- イベントハンドラ ---
 @bot.event
 async def on_voice_state_update(member, before, after):
     guild_id = member.guild.id
     now = datetime.datetime.now(datetime.timezone.utc)
+
+    # 対象チャンネル（入室または退室対象）
+    channel_before = before.channel
+    channel_after = after.channel
+
+    # 一人以下になった場合の処理
+    # チャンネルから退出して一人になった場合、または最初から一人で通話に参加した場合
+    if (channel_before is not None and len(channel_before.members) == 1) or \
+       (channel_before is None and channel_after is not None and len(channel_after.members) == 1):
+        target_channel = channel_before if channel_before is not None else channel_after
+        lonely_member = target_channel.members[0]
+        key = (guild_id, target_channel.id)
+        if key not in lonely_voice_channels: # 既に一人以下の状態として記録されていない場合のみ
+            lonely_voice_channels[key] = {
+                "start_time": now,
+                "member_id": lonely_member.id,
+                "task": asyncio.create_task(check_lonely_channel(guild_id, target_channel.id, lonely_member.id)) # タイマー開始
+            }
+            print(f"チャンネル {target_channel.name} ({target_channel.id}) が一人以下になりました。メンバー: {lonely_member.display_name}")
+
+    # 一人以下の状態から複数人になった場合の処理、またはチャンネルから全員退出した場合
+    if channel_after is not None and len(channel_after.members) > 1:
+        key = (guild_id, channel_after.id)
+        if key in lonely_voice_channels:
+            # タイマーをキャンセル
+            lonely_voice_channels[key]["task"].cancel()
+            lonely_voice_channels.pop(key)
+            print(f"チャンネル {channel_after.name} ({channel_after.id}) が複数人になりました。一人以下の状態を解除し、タイマーをキャンセルしました。")
+    elif channel_before is not None and len(channel_before.members) == 0:
+         key = (guild_id, channel_before.id)
+         if key in lonely_voice_channels:
+            # タイマーをキャンセル
+            lonely_voice_channels[key]["task"].cancel()
+            lonely_voice_channels.pop(key)
+            print(f"チャンネル {channel_before.name} ({channel_before.id}) から全員退出しました。一人以下の状態を解除し、タイマーをキャンセルしました。")
+
+
+    # 同一チャンネル内での状態変化の場合は何もしない
+    if channel_before == channel_after:
+        return
 
     # 通話通知機能
     if before.channel is None and after.channel is not None:
@@ -459,14 +653,6 @@ async def on_voice_state_update(member, before, after):
                         print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
 
     # --- 2人以上通話状態の記録（各メンバーごとに個別記録＋全参加者リストを維持する処理） ---
-
-    # 対象チャンネル（入室または退室対象）
-    channel_before = before.channel
-    channel_after = after.channel
-
-    # 同一チャンネル内での状態変化の場合は何もしない
-    if channel_before == channel_after:
-        return
 
     # 退室処理（before.channel から退出した場合）
     if channel_before is not None:
@@ -696,6 +882,38 @@ async def debug_annual_stats(interaction: discord.Interaction, year: str = None)
         await interaction.response.send_message(embed=embed, ephemeral=True)
     else:
         await interaction.response.send_message(f"{display}の通話統計情報が記録されていません", ephemeral=True)
+
+# 管理者用：寝落ち確認設定変更コマンド
+@bot.tree.command(name="set_sleep_check", description="管理者用: 寝落ち確認機能の設定を変更します")
+@app_commands.default_permissions(administrator=True)
+@app_commands.describe(lonely_timeout_minutes="一人以下の状態が続く時間（分単位）", reaction_wait_minutes="反応を待つ時間（分単位）")
+@app_commands.guild_only()
+async def set_sleep_check(interaction: discord.Interaction, lonely_timeout_minutes: int = None, reaction_wait_minutes: int = None):
+    if lonely_timeout_minutes is None and reaction_wait_minutes is None:
+        settings = await get_guild_settings(interaction.guild.id)
+        await interaction.response.send_message(
+            f"現在の寝落ち確認設定:\n"
+            f"一人以下の状態が続く時間: {settings['lonely_timeout_minutes']} 分\n"
+            f"反応を待つ時間: {settings['reaction_wait_minutes']} 分",
+            ephemeral=True
+        )
+        return
+
+    if lonely_timeout_minutes is not None and lonely_timeout_minutes <= 0:
+        await interaction.response.send_message("一人以下の状態が続く時間は1分以上に設定してください。", ephemeral=True)
+        return
+    if reaction_wait_minutes is not None and reaction_wait_minutes <= 0:
+        await interaction.response.send_message("反応を待つ時間は1分以上に設定してください。", ephemeral=True)
+        return
+
+    await update_guild_settings(interaction.guild.id, lonely_timeout_minutes=lonely_timeout_minutes, reaction_wait_minutes=reaction_wait_minutes)
+    settings = await get_guild_settings(interaction.guild.id)
+    await interaction.response.send_message(
+        f"寝落ち確認設定を更新しました:\n"
+        f"一人以下の状態が続く時間: {settings['lonely_timeout_minutes']} 分\n"
+        f"反応を待つ時間: {settings['reaction_wait_minutes']} 分",
+        ephemeral=True
+    )
 
 # --- 毎日18時のトリガータスク ---
 @tasks.loop(time=datetime.time(hour=18, minute=0, tzinfo=ZoneInfo("Asia/Tokyo")))
