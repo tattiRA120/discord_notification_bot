@@ -98,6 +98,9 @@ lonely_voice_channels = {}
 # キー: message_id, 値: {"member_id": int, "task": asyncio.Task}
 sleep_check_messages = {}
 
+# ボットがサーバーミュートしたメンバーのIDを記録するリスト
+bot_muted_members = []
+
 
 def save_channels_to_file():
     with open(CHANNELS_FILE, "w") as f:
@@ -494,9 +497,13 @@ async def check_lonely_channel(guild_id: int, channel_id: int, member_id: int):
         if notification_channel:
             lonely_member = guild.get_member(member_id)
             if lonely_member:
-                message_content = f"{lonely_member.mention} さん、{channel.name} で一人になってから長い時間が経ちました。\n寝落ちしていませんか？反応がない場合、ミュートします。\nこのメッセージに :white_check_mark: で反応してください。"
+                embed = discord.Embed(
+                    title="寝落ちミュート",
+                    description=f"{lonely_member.mention} さん、{channel.name} chで一人になってから時間が経ちました。\n寝落ちしていませんか？反応がない場合、自動でサーバーミュートします。\nミュートをキャンセルする場合は、 :white_check_mark: を押してください。",
+                    color=discord.Color.orange()
+                )
                 try:
-                    message = await notification_channel.send(message_content)
+                    message = await notification_channel.send(embed=embed, ephemeral=True)
                     await message.add_reaction("✅") # :white_check_mark: 絵文字を追加
 
                     # リアクション監視タスクを開始
@@ -534,6 +541,20 @@ async def wait_for_reaction(message_id: int, member_id: int, guild_id: int, chan
 
         await bot.wait_for('reaction_add', timeout=wait_seconds, check=check)
         print(f"メンバー {member_id} がメッセージ {message_id} に反応しました。ミュート処理をキャンセルします。")
+        guild = bot.get_guild(guild_id)
+        if guild and str(guild_id) in server_notification_channels:
+            notification_channel = bot.get_channel(server_notification_channels[str(guild_id)])
+            if notification_channel:
+                try:
+                    member = guild.get_member(member_id)
+                    if member:
+                        embed = discord.Embed(title="寝落ちミュート", description=f"{member.mention} さんが反応しました。\nサーバーミュートをキャンセルしました。", color=discord.Color.green())
+                        await notification_channel.send(embed=embed, ephemeral=True)
+                except discord.Forbidden:
+                    print(f"エラー: チャンネル {notification_channel.name} ({notification_channel.id}) への送信権限がありません。")
+                except Exception as e:
+                    print(f"ミュートキャンセルメッセージ送信中にエラーが発生しました: {e}")
+
 
     except asyncio.TimeoutError:
         # タイムアウトした場合、ミュート処理を実行
@@ -545,6 +566,21 @@ async def wait_for_reaction(message_id: int, member_id: int, guild_id: int, chan
                 try:
                     await member.edit(mute=True, deafen=True)
                     print(f"メンバー {member.display_name} ({member_id}) をミュートしました。")
+                    # ボットがミュートしたメンバーを記録
+                    if member.id not in bot_muted_members:
+                        bot_muted_members.append(member.id)
+
+                    if str(guild_id) in server_notification_channels:
+                        notification_channel = bot.get_channel(server_notification_channels[str(guild_id)])
+                        if notification_channel:
+                            try:
+                                embed = discord.Embed(title="寝落ちミュート", description=f"{member.mention} さんからの反応がなかったため、サーバーミュートしました。\n再入室するとサーバーミュートが解除されます。", color=discord.Color.red())
+                                await notification_channel.send(embed=embed)
+                            except discord.Forbidden:
+                                print(f"エラー: チャンネル {notification_channel.name} ({notification_channel.id}) への送信権限がありません。")
+                            except Exception as e:
+                                print(f"ミュート実行メッセージ送信中にエラーが発生しました: {e}")
+
                 except discord.Forbidden:
                     print(f"エラー: メンバー {member.display_name} ({member_id}) をミュートする権限がありません。")
                 except Exception as e:
@@ -633,6 +669,35 @@ async def on_voice_state_update(member, before, after):
                     await notification_channel.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
                 else:
                     print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
+
+        # ボットによってミュートされたメンバーが再入室した場合、ミュートを解除
+        if member.id in bot_muted_members:
+            async def unmute_after_delay(m: discord.Member):
+                await asyncio.sleep(1) # 1秒待機
+                try:
+                    await m.edit(mute=False, deafen=False)
+                    if m.id in bot_muted_members:
+                        bot_muted_members.remove(m.id)
+                    print(f"メンバー {m.display_name} ({m.id}) が再入室したためミュートを解除しました。")
+
+                    if str(m.guild.id) in server_notification_channels:
+                        notification_channel = bot.get_channel(server_notification_channels[str(m.guild.id)])
+                        if notification_channel:
+                            try:
+                                embed = discord.Embed(title="寝落ちミュート", description=f"{m.mention} さんが再入室したため、サーバーミュートを解除しました。", color=discord.Color.green())
+                                await notification_channel.send(embed=embed, ephemeral=True)
+                            except discord.Forbidden:
+                                print(f"エラー: チャンネル {notification_channel.name} ({notification_channel.id}) への送信権限がありません。")
+                            except Exception as e:
+                                print(f"再入室時ミュート解除メッセージ送信中にエラーが発生しました: {e}")
+
+                except discord.Forbidden:
+                    print(f"エラー: メンバー {m.display_name} ({m.id}) のミュートを解除する権限がありません。")
+                except Exception as e:
+                    print(f"メンバーミュート解除中にエラーが発生しました: {e}")
+
+            asyncio.create_task(unmute_after_delay(member))
+
     elif before.channel is not None and after.channel is None:
         voice_channel_id = before.channel.id
         if guild_id in call_sessions and voice_channel_id in call_sessions[guild_id]:
