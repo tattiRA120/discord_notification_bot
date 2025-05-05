@@ -128,8 +128,8 @@ async def get_guild_settings(guild_id):
     if settings:
         return settings
     else:
-        # 設定がない場合はデフォルト値を返す (3時間 = 180分)
-        return {"guild_id": str(guild_id), "lonely_timeout_minutes": 180, "reaction_wait_minutes": 5}
+        # 設定がない場合はデフォルト値を返す (単位:分)
+        return {"guild_id": str(guild_id), "lonely_timeout_minutes": 120, "reaction_wait_minutes": 1}
 
 async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_wait_minutes=None):
     conn = await get_db_connection()
