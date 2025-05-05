@@ -1,9 +1,14 @@
 import aiosqlite
+import os
 
 # データベースファイル名
 DB_FILE = "voice_stats.db"
 
 async def init_db():
+    # データベースファイルが存在しない場合にメッセージを出力
+    if not os.path.exists(DB_FILE):
+        print(f"データベースファイル '{DB_FILE}' が見つかりませんでした。新規作成します。")
+
     conn = await aiosqlite.connect(DB_FILE)
     cursor = await conn.cursor()
 
@@ -55,6 +60,10 @@ async def init_db():
 
     await conn.commit()
     await conn.close()
+
+    # データベースの初期化が完了したことを通知
+    print(f"データベース '{DB_FILE}' の初期化が完了しました。")
+
 
 async def get_db_connection():
     conn = await aiosqlite.connect(DB_FILE)
