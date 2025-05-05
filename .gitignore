@@ -7,3 +7,5 @@ pyvenv.cfg
 channels.json
 voice_stats.db
 venv/
+backups/
+__pycache__/

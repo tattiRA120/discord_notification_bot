@@ -1,0 +1,29 @@
+# This file helps Cline understand the structure and purpose of your project files.
+# Lines starting with '#' are comments.
+
+# Describe the main purpose of each file.
+[file: main.py]
+役割: Discordボットのメインエントリーポイント。ボットの起動、イベントループの管理、および他のモジュールのロードを行います。
+
+[file: commands.py]
+役割: Discordスラッシュコマンドの定義とそれに対応する処理を記述します。ユーザーからのコマンド入力を受け付け、適切な処理を実行します。
+
+[file: tasks.py]
+役割: 定期的に実行されるタスク（例: 統計情報の自動送信）を定義します。discord.ext.tasks を使用したタスクループが含まれます。
+
+[file: voice_events.py]
+役割: 音声チャンネルに関連するイベント（参加、退出、ミュートなど）のハンドラを定義します。通話時間の記録や寝落ち確認機能などのロジックが含まれます。
+
+[file: database.py]
+役割: SQLiteデータベースへのアクセスと操作（接続、クエリ実行、データの保存・取得）を行う関数を定義します。他のファイルはこのモジュールを介してデータベースとやり取りします。
+
+[file: utils.py]
+役割: 一般的なユーティリティ関数やヘルパー関数をまとめます。
+
+# You can also add more specific rules or information, e.g.,
+# [rule: Avoid direct database access outside of database.py]
+# データベース操作はdatabase.py内の関数を介して行うべきです。
+
+# [rule: Command logic should reside in commands.py]
+# スラッシュコマンドの処理ロジックはcommands.pyに記述し、main.pyからは呼び出すだけに留めるべきです。
+
