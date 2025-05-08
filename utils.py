@@ -8,6 +8,7 @@ import config
 import formatters
 
 from database import get_total_call_time, update_member_monthly_stats, get_guild_settings
+from config import get_notification_channel_id # get_notification_channel_id をインポート
 # config, voice_state_manager, formatters は後でインポートします
 
 # .envファイルの環境変数を読み込む
