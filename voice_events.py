@@ -193,7 +193,6 @@ def remove_bot_muted_member(member_id: int):
         print(f"メンバー {member_id} をbot_muted_membersから削除しました。")
 
 # --- イベントハンドラ ---
-# @utils.bot.event # デコレータを削除
 async def on_voice_state_update(member, before, after):
     guild_id = member.guild.id
     now = datetime.datetime.now(datetime.timezone.utc)
