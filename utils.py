@@ -55,6 +55,15 @@ def load_channels_from_file():
     # キーを文字列に統一
     server_notification_channels = {str(guild_id): channel_id for guild_id, channel_id in server_notification_channels.items()}
 
+# 通知チャンネルIDを取得する
+def get_notification_channel_id(guild_id: int):
+    return server_notification_channels.get(str(guild_id))
+
+# 通知チャンネルIDを設定する
+def set_notification_channel_id(guild_id: int, channel_id: int):
+    server_notification_channels[str(guild_id)] = channel_id
+    save_channels_to_file()
+
 def convert_utc_to_jst(utc_time):
     return utc_time.astimezone(ZoneInfo("Asia/Tokyo"))
 
@@ -68,6 +77,19 @@ def format_duration(duration_seconds):
 def calculate_call_duration_seconds(start_time):
     now = datetime.datetime.now(datetime.timezone.utc)
     return (now - start_time).total_seconds()
+
+# アクティブな通話チャンネルとその通話時間を取得する
+def get_active_call_durations(guild_id: int):
+    active_calls = []
+    now = datetime.datetime.now(datetime.timezone.utc)
+    for key, session_data in active_voice_sessions.items():
+        if key[0] == guild_id:
+            channel = bot.get_channel(key[1])
+            if channel and isinstance(channel, discord.VoiceChannel):
+                duration_seconds = (now - session_data["session_start"]).total_seconds()
+                formatted_duration = format_duration(duration_seconds)
+                active_calls.append({"channel_name": channel.name, "duration": formatted_duration})
+    return active_calls
 
 # (guild_id, channel_id) をキーに、現在進行中の「2人以上通話セッション」を記録する
 active_voice_sessions = {}

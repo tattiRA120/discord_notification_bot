@@ -26,7 +26,7 @@ async def init_db():
     await cursor.execute("""
         CREATE TABLE IF NOT EXISTS session_participants (
             session_id INTEGER,
-            member_id TEXT NOT NULL,
+            member_id INTEGER NOT NULL,
             PRIMARY KEY (session_id, member_id),
             FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
         )
@@ -36,7 +36,7 @@ async def init_db():
     await cursor.execute("""
         CREATE TABLE IF NOT EXISTS member_monthly_stats (
             month_key TEXT NOT NULL,
-            member_id TEXT NOT NULL,
+            member_id INTEGER NOT NULL,
             total_duration INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (month_key, member_id)
         )
@@ -78,7 +78,7 @@ async def update_member_monthly_stats(month_key, member_id, duration):
         VALUES (?, ?, ?)
         ON CONFLICT(month_key, member_id) DO UPDATE SET
             total_duration = total_duration + excluded.total_duration
-    """, (month_key, str(member_id), duration))
+    """, (month_key, member_id, duration))
     await conn.commit()
     await conn.close()
 
@@ -97,7 +97,7 @@ async def record_voice_session_to_db(session_start, session_duration, participan
     session_id = cursor.lastrowid # 挿入されたセッションのIDを取得
 
     # session_participants テーブルに参加者を挿入
-    participant_data = [(session_id, str(p)) for p in participants]
+    participant_data = [(session_id, p) for p in participants]
     await cursor.executemany("""
         INSERT INTO session_participants (session_id, member_id)
         VALUES (?, ?)
@@ -113,7 +113,7 @@ async def get_total_call_time(member_id):
         SELECT SUM(total_duration) as total
         FROM member_monthly_stats
         WHERE member_id = ?
-    """, (str(member_id),)) # member_idは文字列として保存されているため変換
+    """, (member_id,))
     result = await cursor.fetchone()
     await conn.close()
     # 結果がNoneの場合（通話履歴がない場合）は0を返す
@@ -129,7 +129,7 @@ async def get_guild_settings(guild_id):
         return settings
     else:
         # 設定がない場合はデフォルト値を返す (単位:分)
-        return {"guild_id": str(guild_id), "lonely_timeout_minutes": 120, "reaction_wait_minutes": 1}
+        return {"guild_id": str(guild_id), "lonely_timeout_minutes": 1, "reaction_wait_minutes": 1} # テスト用で1分設定
 
 async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_wait_minutes=None):
     conn = await get_db_connection()

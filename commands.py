@@ -19,20 +19,32 @@ async def get_monthly_statistics(guild, month: str):
     sessions_data = await cursor.fetchall()
 
     sessions = []
-    for session_row in sessions_data:
-        # 参加者を取得
-        await cursor.execute("""
-            SELECT member_id FROM session_participants
-            WHERE session_id = ?
-        """, (session_row['id'],))
-        participants_data = await cursor.fetchall()
-        participants = [int(p['member_id']) for p in participants_data] # member_idをintに戻す
+    session_ids = [session_row['id'] for session_row in sessions_data]
 
-        sessions.append({
-            "start_time": session_row['start_time'],
-            "duration": session_row['duration'],
-            "participants": participants
-        })
+    if session_ids:
+        # 全セッションの参加者を一度に取得
+        placeholders = ','.join('?' for _ in session_ids)
+        await cursor.execute(f"""
+            SELECT session_id, member_id FROM session_participants
+            WHERE session_id IN ({placeholders})
+        """, session_ids)
+        all_participants_data = await cursor.fetchall()
+
+        # セッションIDごとに参加者をグループ化
+        session_participants_map = {}
+        for participant_row in all_participants_data:
+            session_id = participant_row['session_id']
+            member_id = participant_row['member_id']
+            if session_id not in session_participants_map:
+                session_participants_map[session_id] = []
+            session_participants_map[session_id].append(member_id)
+
+        for session_row in sessions_data:
+            sessions.append({
+                "start_time": session_row['start_time'],
+                "duration": session_row['duration'],
+                "participants": session_participants_map.get(session_row['id'], [])
+            })
 
     # メンバー別月間累計時間の取得
     await cursor.execute("""
@@ -72,7 +84,7 @@ async def get_monthly_statistics(guild, month: str):
     sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
     ranking_lines = []
     for i, (member_id, duration) in enumerate(sorted_members, start=1):
-        m_obj = guild.get_member(int(member_id))
+        m_obj = guild.get_member(member_id)
         name = m_obj.display_name if m_obj else str(member_id)
         ranking_lines.append(f"{i}.  {utils.format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
@@ -113,20 +125,32 @@ async def create_annual_stats_embed(guild, year: str):
     sessions_data = await cursor.fetchall()
 
     sessions_all = []
-    for session_row in sessions_data:
-         # 参加者を取得
-        await cursor.execute("""
-            SELECT member_id FROM session_participants
-            WHERE session_id = ?
-        """, (session_row['id'],))
-        participants_data = await cursor.fetchall()
-        participants = [int(p['member_id']) for p in participants_data] # member_idをintに戻す
+    session_ids = [session_row['id'] for session_row in sessions_data]
 
-        sessions_all.append({
-            "start_time": session_row['start_time'],
-            "duration": session_row['duration'],
-            "participants": participants
-        })
+    if session_ids:
+        # 全セッションの参加者を一度に取得
+        placeholders = ','.join('?' for _ in session_ids)
+        await cursor.execute(f"""
+            SELECT session_id, member_id FROM session_participants
+            WHERE session_id IN ({placeholders})
+        """, session_ids)
+        all_participants_data = await cursor.fetchall()
+
+        # セッションIDごとに参加者をグループ化
+        session_participants_map = {}
+        for participant_row in all_participants_data:
+            session_id = participant_row['session_id']
+            member_id = participant_row['member_id']
+            if session_id not in session_participants_map:
+                session_participants_map[session_id] = []
+            session_participants_map[session_id].append(member_id)
+
+        for session_row in sessions_data:
+            sessions_all.append({
+                "start_time": session_row['start_time'],
+                "duration": session_row['duration'],
+                "participants": session_participants_map.get(session_row['id'], [])
+            })
 
     # 対象年度のメンバー別累計時間を全て取得
     await cursor.execute("""
@@ -166,7 +190,7 @@ async def create_annual_stats_embed(guild, year: str):
     sorted_members = sorted(members_total.items(), key=lambda x: x[1], reverse=True)
     ranking_lines = []
     for i, (member_id, duration) in enumerate(sorted_members, start=1):
-        m_obj = guild.get_member(int(member_id))
+        m_obj = guild.get_member(member_id)
         name = m_obj.display_name if m_obj else str(member_id)
         ranking_lines.append(f"{i}.  {utils.format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
@@ -265,18 +289,13 @@ async def call_duration_callback(interaction: discord.Interaction):
     embed = discord.Embed(color=discord.Color.blue())
     embed.set_author(name="現在の通話状況")
 
-    for key, session_data in utils.active_voice_sessions.items():
-        if key[0] == guild_id:
-            channel = utils.bot.get_channel(key[1])
-            if channel and isinstance(channel, discord.VoiceChannel):
-                duration_seconds = utils.calculate_call_duration_seconds(session_data["session_start"])
-                formatted_duration = utils.format_duration(duration_seconds)
-                embed.add_field(name=f"{channel.name}", value=formatted_duration, inline=False)
-                active_calls_found = True
+    active_calls = utils.get_active_call_durations(guild_id)
 
-    if not active_calls_found:
+    if not active_calls:
         await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
     else:
+        for call in active_calls:
+            embed.add_field(name=f"{call['channel_name']}", value=call['duration'], inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 call_duration = app_commands.Command(name="call_duration", description="現在の通話経過時間", callback=call_duration_callback)
@@ -297,13 +316,14 @@ help = app_commands.Command(name="help", description="利用可能なコマン�
 @app_commands.describe(channel="通知を送信するチャンネル")
 @app_commands.guild_only()
 async def changesendchannel_callback(interaction: discord.Interaction, channel: discord.TextChannel):
-    guild_id = str(interaction.guild.id)
-    if guild_id in utils.server_notification_channels and utils.server_notification_channels[guild_id] == channel.id:
-        current_channel = utils.bot.get_channel(utils.server_notification_channels[guild_id])
+    guild_id = interaction.guild.id
+    current_channel_id = utils.get_notification_channel_id(guild_id)
+
+    if current_channel_id is not None and current_channel_id == channel.id:
+        current_channel = utils.bot.get_channel(current_channel_id)
         await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。", ephemeral=True)
     else:
-        utils.server_notification_channels[guild_id] = channel.id
-        utils.save_channels_to_file()
+        utils.set_notification_channel_id(guild_id, channel.id)
         await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。", ephemeral=True)
 
 changesendchannel = app_commands.Command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します", callback=changesendchannel_callback)

@@ -44,7 +44,7 @@ async def scheduled_stats():
                 else:
                     embed = utils.discord.Embed(
                         title=f"【年間の通話統計】",
-                        description=f"{month_display}は通話記録がありませんでした",
+                        description=f"{year_display}は通話記録がありませんでした",
                         color=utils.discord.Color.orange()
                     )
                     await channel.send(embed=embed)
