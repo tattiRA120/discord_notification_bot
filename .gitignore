@@ -9,3 +9,5 @@ voice_stats.db
 venv/
 backups/
 __pycache__/
+memory-bank/
+review_results/
