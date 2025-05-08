@@ -1,10 +1,14 @@
 import discord
 from discord import app_commands
+from discord.ext import commands # Cog を使用するためにインポート
 import datetime
 from zoneinfo import ZoneInfo
 
-import utils
 from database import get_db_connection, get_total_call_time, get_guild_settings, update_guild_settings
+import config
+import voice_state_manager
+import formatters
+from voice_events import SleepCheckManager # SleepCheckManager をインポート
 
 # --- 月間統計作成用ヘルパー関数 ---
 async def get_monthly_statistics(guild, month: str):
@@ -67,7 +71,7 @@ async def get_monthly_statistics(guild, month: str):
         longest_session = max(sessions, key=lambda s: s["duration"])
         longest_duration = longest_session["duration"]
         # UTCのISO形式からJSTに変換
-        longest_date = utils.convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
+        longest_date = formatters.convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
         longest_participants = longest_session.get("participants", [])
         longest_participants_names = []
         for mid in longest_participants:
@@ -76,7 +80,7 @@ async def get_monthly_statistics(guild, month: str):
                 longest_participants_names.append(m_obj.display_name)
             else:
                 longest_participants_names.append(str(mid))
-        longest_info = f"{utils.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
+        longest_info = f"{formatters.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
     else:
         longest_info = "なし"
 
@@ -86,7 +90,7 @@ async def get_monthly_statistics(guild, month: str):
     for i, (member_id, duration) in enumerate(sorted_members, start=1):
         m_obj = guild.get_member(member_id)
         name = m_obj.display_name if m_obj else str(member_id)
-        ranking_lines.append(f"{i}.  {utils.format_duration(duration)}  {name}")
+        ranking_lines.append(f"{i}.  {formatters.format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
     return monthly_avg, longest_info, ranking_text
@@ -106,7 +110,7 @@ async def create_monthly_stats_embed(guild, month: str):
          return None, month_display
 
     embed = discord.Embed(title=f"【{month_display}】通話統計情報", color=0x00ff00)
-    embed.add_field(name="平均通話時間", value=f"{utils.format_duration(monthly_avg)}", inline=False)
+    embed.add_field(name="平均通話時間", value=f"{formatters.format_duration(monthly_avg)}", inline=False)
     embed.add_field(name="最長通話", value=longest_info, inline=False)
     embed.add_field(name="通話時間ランキング", value=ranking_text, inline=False)
 
@@ -175,7 +179,7 @@ async def create_annual_stats_embed(guild, year: str):
     # 最長セッション
     longest_session = max(sessions_all, key=lambda s: s["duration"])
     longest_duration = longest_session["duration"]
-    longest_date = utils.convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
+    longest_date = formatters.convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
     longest_participants = longest_session["participants"]
     longest_participants_names = []
     for mid in longest_participants:
@@ -184,7 +188,7 @@ async def create_annual_stats_embed(guild, year: str):
             longest_participants_names.append(m_obj.display_name)
         else:
             longest_participants_names.append(str(mid))
-    longest_info = f"{utils.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
+    longest_info = f"{formatters.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
 
     # メンバー別ランキング（累計時間）
     sorted_members = sorted(members_total.items(), key=lambda x: x[1], reverse=True)
@@ -192,189 +196,192 @@ async def create_annual_stats_embed(guild, year: str):
     for i, (member_id, duration) in enumerate(sorted_members, start=1):
         m_obj = guild.get_member(member_id)
         name = m_obj.display_name if m_obj else str(member_id)
-        ranking_lines.append(f"{i}.  {utils.format_duration(duration)}  {name}")
+        ranking_lines.append(f"{i}.  {formatters.format_duration(duration)}  {name}")
     ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
 
     embed = discord.Embed(title=f"【{year_display}】年間通話統計情報", color=0x00ff00)
-    embed.add_field(name="年間: 平均通話時間", value=f"{utils.format_duration(avg_duration)}", inline=False)
+    embed.add_field(name="年間: 平均通話時間", value=f"{formatters.format_duration(avg_duration)}", inline=False)
     embed.add_field(name="年間: 最長通話", value=longest_info, inline=False)
     embed.add_field(name="年間: 通話時間ランキング", value=ranking_text, inline=False)
     return embed, year_display
 
 
-# --- /monthly_stats コマンド ---
-@app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
-@app_commands.guild_only()
-async def monthly_stats_callback(interaction: discord.Interaction, month: str = None):
-    if month is None:
-        now = datetime.datetime.now(datetime.timezone.utc)
-        month = now.strftime("%Y-%m")
+# --- コマンドを格納する Cog クラス ---
+class BotCommands(commands.Cog):
+    def __init__(self, bot, sleep_check_manager, voice_state_manager):
+        self.bot = bot
+        self.sleep_check_manager = sleep_check_manager
+        self.voice_state_manager = voice_state_manager
 
-    try:
-        year, mon = month.split("-")
-        month_display = f"{year}年{mon}月"
-    except ValueError:
-        await interaction.response.send_message("指定された月の形式が正しくありません。形式は YYYY-MM で指定してください。", ephemeral=True)
-        return
+    # --- /monthly_stats コマンド ---
+    @app_commands.command(name="monthly_stats", description="月間通話統計を表示します") # nameとdescriptionを明示
+    @app_commands.describe(month="表示する年月（形式: YYYY-MM）省略時は今月")
+    @app_commands.guild_only()
+    async def monthly_stats_callback(self, interaction: discord.Interaction, month: str = None):
+        if month is None:
+            now = datetime.datetime.now(datetime.timezone.utc)
+            month = now.strftime("%Y-%m")
 
-    embed, month_display = await create_monthly_stats_embed(interaction.guild, month)
+        try:
+            year, mon = month.split("-")
+            month_display = f"{year}年{mon}月"
+        except ValueError:
+            await interaction.response.send_message("指定された月の形式が正しくありません。形式は YYYY-MM で指定してください。", ephemeral=True)
+            return
 
-    if embed is None:
-        await interaction.response.send_message(f"{month_display}は通話統計情報が記録されていません", ephemeral=True)
-        return
+        embed, month_display = await create_monthly_stats_embed(interaction.guild, month)
 
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        if embed is None:
+            await interaction.response.send_message(f"{month_display}は通話統計情報が記録されていません", ephemeral=True)
+            return
 
-monthly_stats = app_commands.Command(name="monthly_stats", description="月間の通話統計情報を表示します", callback=monthly_stats_callback)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
-
-# --- /total_time コマンド ---
-@app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
-@app_commands.guild_only()
-async def total_time_callback(interaction: discord.Interaction, member: discord.Member = None):
-    member = member or interaction.user
-    total_seconds = await get_total_call_time(member.id)
-
-    embed = discord.Embed(color=discord.Color.blue())
-    embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
-
-    if total_seconds == 0:
-        embed.add_field(name="総通話時間", value="通話履歴はありません。", inline=False)
-    else:
-        formatted_time = utils.format_duration(total_seconds)
-        embed.add_field(name="総通話時間", value=formatted_time, inline=False)
-
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-total_time = app_commands.Command(name="total_time", description="メンバーの累計通話時間を表示します", callback=total_time_callback)
-
-# --- /total_call_ranking コマンド ---
-@app_commands.guild_only()
-async def call_ranking_callback(interaction: discord.Interaction):
-    guild = interaction.guild
-    members = guild.members
-
-    # メンバーの通話時間を取得
-    member_call_times = {}
-    for member in members:
+    # --- /total_time コマンド ---
+    @app_commands.command(name="total_time", description="指定したメンバーの総通話時間を表示します") # nameとdescriptionを明示
+    @app_commands.describe(member="通話時間を確認するメンバー（省略時は自分）")
+    @app_commands.guild_only()
+    async def total_time_callback(self, interaction: discord.Interaction, member: discord.Member = None):
+        member = member or interaction.user
         total_seconds = await get_total_call_time(member.id)
-        if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを追加
-            member_call_times[member.id] = total_seconds
 
-    # 通話時間でランキングを作成
-    sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
+        embed = discord.Embed(color=discord.Color.blue())
+        embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
 
-    if not sorted_members:
-        await interaction.response.send_message("通話履歴がないため、ランキングを表示できません。", ephemeral=True)
-    else:
-        embed = discord.Embed(title="総通話時間ランキング", color=discord.Color.gold())
-        ranking_text = ""
-        for i, (member_id, total_seconds) in enumerate(sorted_members[:10], start=1):  # 上位10名を表示
-            member = guild.get_member(member_id)
-            if member:
-                formatted_time = utils.format_duration(total_seconds)
-                ranking_text += f"{i}. {formatted_time} {member.display_name}\n"
-        embed.add_field(name="", value=ranking_text, inline=False)
+        if total_seconds == 0:
+            embed.add_field(name="総通話時間", value="通話履歴はありません。", inline=False)
+        else:
+            formatted_time = formatters.format_duration(total_seconds)
+            embed.add_field(name="総通話時間", value=formatted_time, inline=False)
+
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-call_ranking = app_commands.Command(name="total_call_ranking", description="累計通話時間ランキングを表示します", callback=call_ranking_callback)
+    # --- /total_call_ranking コマンド ---
+    @app_commands.command(name="call_ranking", description="総通話時間ランキングを表示します") # nameとdescriptionを明示
+    @app_commands.guild_only()
+    async def call_ranking_callback(self, interaction: discord.Interaction):
+        guild = interaction.guild
+        members = guild.members
 
-# --- /call_duration コマンド ---
-@app_commands.guild_only()
-async def call_duration_callback(interaction: discord.Interaction):
-    guild_id = interaction.guild.id
-    now = datetime.datetime.now(datetime.timezone.utc)
-    active_calls_found = False
+        # メンバーの通話時間を取得
+        member_call_times = {}
+        for member in members:
+            total_seconds = await get_total_call_time(member.id)
+            if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを追加
+                member_call_times[member.id] = total_seconds
 
-    embed = discord.Embed(color=discord.Color.blue())
-    embed.set_author(name="現在の通話状況")
+        # 通話時間でランキングを作成
+        sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
 
-    active_calls = utils.get_active_call_durations(guild_id)
+        if not sorted_members:
+            await interaction.response.send_message("通話履歴がないため、ランキングを表示できません。", ephemeral=True)
+        else:
+            embed = discord.Embed(title="総通話時間ランキング", color=discord.Color.gold())
+            ranking_text = ""
+            for i, (member_id, total_seconds) in enumerate(sorted_members[:10], start=1):  # 上位10名を表示
+                member = guild.get_member(member_id)
+                if member:
+                    formatted_time = formatters.format_duration(total_seconds)
+                    ranking_text += f"{i}. {formatted_time} {member.display_name}\n"
+            embed.add_field(name="", value=ranking_text, inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    if not active_calls:
-        await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
-    else:
-        for call in active_calls:
-            embed.add_field(name=f"{call['channel_name']}", value=call['duration'], inline=False)
+    # --- /call_duration コマンド ---
+    @app_commands.command(name="call_duration", description="現在の通話状況を表示します") # nameとdescriptionを明示
+    @app_commands.guild_only()
+    async def call_duration_callback(self, interaction: discord.Interaction):
+        guild_id = interaction.guild.id
+        now = datetime.datetime.now(datetime.timezone.utc)
+        active_calls_found = False
+
+        embed = discord.Embed(color=discord.Color.blue())
+        embed.set_author(name="現在の通話状況")
+
+        # voice_state_manager から get_active_call_durations を使用
+        active_calls = self.voice_state_manager.get_active_call_durations(guild_id)
+
+        if not active_calls:
+            await interaction.response.send_message("現在、このサーバーで2人以上が参加している通話はありません。", ephemeral=True)
+        else:
+            for call in active_calls:
+                embed.add_field(name=f"{call['channel_name']}", value=call['duration'], inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # --- /help コマンド ---
+    @app_commands.command(name="help", description="コマンド一覧を表示します") # nameとdescriptionを明示
+    @app_commands.guild_only()
+    async def help_callback(self, interaction: discord.Interaction):
+        # interaction.client は bot インスタンスを参照します
+        commands = self.bot.tree.get_commands(guild=interaction.guild)
+        embed = discord.Embed(title="コマンド一覧", color=0x00ff00)
+        for command in commands:
+            embed.add_field(name=command.name, value=command.description, inline=False)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-call_duration = app_commands.Command(name="call_duration", description="現在の通話経過時間", callback=call_duration_callback)
+    # 管理者用：通知先チャンネル変更コマンド
+    @app_commands.command(name="changesendchannel", description="通知を送信するチャンネルを設定します") # nameとdescriptionを明示
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(channel="通知を送信するチャンネル")
+    @app_commands.guild_only()
+    async def changesendchannel_callback(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        guild_id = interaction.guild.id
+        # config から get_notification_channel_id を使用
+        current_channel_id = config.get_notification_channel_id(guild_id)
 
-# --- /help コマンド ---
-@app_commands.guild_only()
-async def help_callback(interaction: discord.Interaction):
-    commands = utils.bot.tree.get_commands(guild=interaction.guild)
-    embed = discord.Embed(title="コマンド一覧", color=0x00ff00)
-    for command in commands:
-        embed.add_field(name=command.name, value=command.description, inline=False)
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+        if current_channel_id is not None and current_channel_id == channel.id:
+            # interaction.client は bot インスタンスを参照します
+            current_channel = self.bot.get_channel(current_channel_id)
+            await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。", ephemeral=True)
+        else:
+            # config から set_notification_channel_id を使用
+            config.set_notification_channel_id(guild_id, channel.id)
+            await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。", ephemeral=True)
 
-help = app_commands.Command(name="help", description="利用可能なコマンド一覧を表示します", callback=help_callback)
+    # 管理者用：年間統計情報送信デバッグコマンド
+    @app_commands.command(name="debug_annual_stats", description="指定した年度の年間通話統計情報を表示します（管理者用）") # nameとdescriptionを明示
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
+    @app_commands.guild_only()
+    async def debug_annual_stats_callback(self, interaction: discord.Interaction, year: str = None):
+        # 年度の指定がなければ現在の年度を使用
+        if year is None:
+            now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+            year = str(now.year)
 
-# 管理者用：通知先チャンネル変更コマンド
-@app_commands.default_permissions(administrator=True)
-@app_commands.describe(channel="通知を送信するチャンネル")
-@app_commands.guild_only()
-async def changesendchannel_callback(interaction: discord.Interaction, channel: discord.TextChannel):
-    guild_id = interaction.guild.id
-    current_channel_id = utils.get_notification_channel_id(guild_id)
+        embed, display = await create_annual_stats_embed(interaction.guild, year)
+        if embed:
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            await interaction.response.send_message(f"{display}の通話統計情報が記録されていません", ephemeral=True)
 
-    if current_channel_id is not None and current_channel_id == channel.id:
-        current_channel = utils.bot.get_channel(current_channel_id)
-        await interaction.response.send_message(f"すでに {current_channel.mention} で設定済みです。", ephemeral=True)
-    else:
-        utils.set_notification_channel_id(guild_id, channel.id)
-        await interaction.response.send_message(f"通知先のチャンネルが {channel.mention} に設定されました。", ephemeral=True)
+    # 管理者用：寝落ち確認設定変更コマンド
+    @app_commands.command(name="set_sleep_check", description="寝落ち確認の設定を変更します（管理者用）") # nameとdescriptionを明示
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.describe(lonely_timeout_minutes="一人以下の状態が続く時間（分単位）", reaction_wait_minutes="反応を待つ時間（分単位）")
+    @app_commands.guild_only()
+    async def set_sleep_check_callback(self, interaction: discord.Interaction, lonely_timeout_minutes: int = None, reaction_wait_minutes: int = None):
+        if lonely_timeout_minutes is None and reaction_wait_minutes is None:
+            settings = await get_guild_settings(interaction.guild.id)
+            await interaction.response.send_message(
+                f"現在の寝落ち確認設定:\n"
+                f"一人以下の状態が続く時間: {settings['lonely_timeout_minutes']} 分\n"
+                f"反応を待つ時間: {settings['reaction_wait_minutes']} 分",
+                ephemeral=True
+            )
+            return
 
-changesendchannel = app_commands.Command(name="changesendchannel", description="管理者用: 通知先のチャンネルを変更します", callback=changesendchannel_callback)
+        if lonely_timeout_minutes is not None and lonely_timeout_minutes <= 0:
+            await interaction.response.send_message("一人以下の状態が続く時間は1分以上に設定してください。", ephemeral=True)
+            return
+        if reaction_wait_minutes is not None and reaction_wait_minutes <= 0:
+            await interaction.response.send_message("反応を待つ時間は1分以上に設定してください。", ephemeral=True)
+            return
 
-# 管理者用：年間統計情報送信デバッグコマンド
-@app_commands.default_permissions(administrator=True)
-@app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
-@app_commands.guild_only()
-async def debug_annual_stats_callback(interaction: discord.Interaction, year: str = None):
-    # 年度の指定がなければ現在の年度を使用
-    if year is None:
-        now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
-        year = str(now.year)
-
-    embed, display = await create_annual_stats_embed(interaction.guild, year)
-    if embed:
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    else:
-        await interaction.response.send_message(f"{display}の通話統計情報が記録されていません", ephemeral=True)
-
-debug_annual_stats = app_commands.Command(name="debug_annual_stats", description="管理者用: 年間統計情報送信をデバッグします", callback=debug_annual_stats_callback)
-
-# 管理者用：寝落ち確認設定変更コマンド
-@app_commands.default_permissions(administrator=True)
-@app_commands.describe(lonely_timeout_minutes="一人以下の状態が続く時間（分単位）", reaction_wait_minutes="反応を待つ時間（分単位）")
-@app_commands.guild_only()
-async def set_sleep_check_callback(interaction: discord.Interaction, lonely_timeout_minutes: int = None, reaction_wait_minutes: int = None):
-    if lonely_timeout_minutes is None and reaction_wait_minutes is None:
+        await update_guild_settings(interaction.guild.id, lonely_timeout_minutes=lonely_timeout_minutes, reaction_wait_minutes=reaction_wait_minutes)
         settings = await get_guild_settings(interaction.guild.id)
         await interaction.response.send_message(
-            f"現在の寝落ち確認設定:\n"
+            f"寝落ち確認設定を更新しました:\n"
             f"一人以下の状態が続く時間: {settings['lonely_timeout_minutes']} 分\n"
             f"反応を待つ時間: {settings['reaction_wait_minutes']} 分",
             ephemeral=True
         )
-        return
-
-    if lonely_timeout_minutes is not None and lonely_timeout_minutes <= 0:
-        await interaction.response.send_message("一人以下の状態が続く時間は1分以上に設定してください。", ephemeral=True)
-        return
-    if reaction_wait_minutes is not None and reaction_wait_minutes <= 0:
-        await interaction.response.send_message("反応を待つ時間は1分以上に設定してください。", ephemeral=True)
-        return
-
-    await update_guild_settings(interaction.guild.id, lonely_timeout_minutes=lonely_timeout_minutes, reaction_wait_minutes=reaction_wait_minutes)
-    settings = await get_guild_settings(interaction.guild.id)
-    await interaction.response.send_message(
-        f"寝落ち確認設定を更新しました:\n"
-        f"一人以下の状態が続く時間: {settings['lonely_timeout_minutes']} 分\n"
-        f"反応を待つ時間: {settings['reaction_wait_minutes']} 分",
-        ephemeral=True
-    )
-
-set_sleep_check = app_commands.Command(name="set_sleep_check", description="管理者用: 寝落ち確認機能の設定を変更します", callback=set_sleep_check_callback)
