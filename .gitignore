@@ -11,3 +11,4 @@ backups/
 __pycache__/
 memory-bank/
 review_results/
+task/
