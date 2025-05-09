@@ -47,7 +47,7 @@ DAY_OF_YEAR_LAST = 31
 MONTH_OF_YEAR_LAST = 12
 
 # Logging related constants
-LOGGING_LEVEL = "INFO" # ロギングレベルを文字列で定義
+LOGGING_LEVEL = "WARNING" # デフォルト値
 LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
 
 # Bot related constants

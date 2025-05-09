@@ -15,7 +15,9 @@ import config
 from database import init_db, close_db
 
 # ロギングの設定
-logging.basicConfig(level=constants.LOGGING_LEVEL, format=constants.LOGGING_FORMAT)
+# 環境変数からロギングレベルを取得、設定されていなければ constants.LOGGING_LEVEL を使用
+log_level = os.getenv('LOG_LEVEL', constants.LOGGING_LEVEL).upper()
+logging.basicConfig(level=log_level, format=constants.LOGGING_FORMAT)
 
 # 設定の読み込み (環境変数からトークンを取得)
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
