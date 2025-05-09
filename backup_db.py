@@ -2,14 +2,32 @@ import sqlite3
 import shutil
 import os
 import datetime
-import logging # logging モジュールをインポート
-from . import constants # constants モジュールをインポート
+import logging
+import constants
 
 # ロガーを取得
 logger = logging.getLogger(__name__)
 
 DB_FILE = constants.DB_FILE_NAME
 BACKUP_DIR = constants.BACKUP_DIR_NAME
+
+# 同期的なデータベース接続を管理するコンテキストマネージャー
+class DatabaseConnection:
+    def __init__(self, db_file):
+        self.db_file = db_file
+        self.conn = None
+
+    def __enter__(self):
+        self.conn = sqlite3.connect(self.db_file)
+        logger.debug(f"データベース接続を取得しました: {self.db_file}")
+        return self.conn
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.conn:
+            self.conn.close()
+            logger.debug(f"データベース接続を閉じました: {self.db_file}")
+        # 例外が発生した場合は、そのまま伝播させる (Falseを返す)
+        return False
 
 def backup_database():
     logger.info("データベースのバックアップを開始します。")
@@ -20,23 +38,19 @@ def backup_database():
     backup_file = os.path.join(BACKUP_DIR, f"{constants.BACKUP_FILE_PREFIX}{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{constants.DB_FILE_EXTENSION}")
     logger.debug(f"バックアップファイル名: {backup_file}")
 
-    con = None
-    bck = None
     try:
-        # データベースに接続
-        con = sqlite3.connect(DB_FILE)
-        logger.debug(f"データベース '{DB_FILE}' に接続しました。")
-        # バックアップデータベースに接続 (存在しない場合は作成される)
-        bck = sqlite3.connect(backup_file)
-        logger.debug(f"バックアップデータベース '{backup_file}' に接続しました。")
+        # コンテキストマネージャーを使用してデータベースに接続
+        with DatabaseConnection(DB_FILE) as con:
+            logger.debug(f"元データベース '{DB_FILE}' に接続しました。")
+            # バックアップデータベースに接続 (存在しない場合は作成される)
+            with DatabaseConnection(backup_file) as bck:
+                logger.debug(f"バックアップデータベース '{backup_file}' に接続しました。")
 
-        # バックアップを実行
-        # pages=0 は全てのページをバックアップすることを意味します
-        con.backup(bck, pages=constants.SQLITE_BACKUP_ALL_PAGES)
-        logger.debug("データベースのバックアップを実行しました。")
+                # バックアップを実行
+                # pages=0 は全てのページをバックアップすることを意味します
+                con.backup(bck, pages=constants.SQLITE_BACKUP_ALL_PAGES)
+                logger.debug("データベースのバックアップを実行しました。")
 
-        bck.close()
-        con.close()
         logger.info(f"データベースのバックアップが完了しました: {backup_file}")
 
         # 古いバックアップファイルを削除
@@ -62,19 +76,7 @@ def backup_database():
         logger.error(f"データベースのバックアップ中にSQLiteエラーが発生しました: {e}")
     except Exception as e:
         logger.error(f"データベースのバックアップ中に予期しないエラーが発生しました: {e}")
-    finally:
-        if bck:
-            try:
-                bck.close()
-                logger.debug("バックアップデータベース接続を閉じました。")
-            except Exception as e:
-                logger.error(f"バックアップデータベース接続のクローズ中にエラーが発生しました: {e}")
-        if con:
-            try:
-                con.close()
-                logger.debug("元データベース接続を閉じました。")
-            except Exception as e:
-                logger.error(f"元データベース接続のクローズ中にエラーが発生しました: {e}")
+
     logger.info("データベースのバックアップ処理が終了しました。")
 
 
