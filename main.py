@@ -96,17 +96,6 @@ async def on_ready():
     logging.info(f'コマンド登録と同期が完了しました。{synced_guild_count} 個のギルドで同期に成功しました。')
     logging.info('Bot is ready.')
 
-@bot.event
-async def on_disconnect():
-    logging.info('Bot disconnected.')
-    # データベース接続を閉じる
-    # close_db 関数は接続オブジェクトを引数に取るが、ここではグローバルに管理されていないため修正が必要
-    # init_db で取得した接続を保持するか、close_db の実装を変更する必要がある
-    # 一時的にログ出力のみとする
-    logging.warning('Database connection close skipped: close_db requires connection object.')
-    # await close_db() # 修正が必要
-    logging.info('Database connection closed (simulated).')
-
 # Botの実行
 if __name__ == "__main__":
     try:

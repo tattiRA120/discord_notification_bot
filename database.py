@@ -6,6 +6,25 @@ import constants # constants モジュールをインポート
 # ロガーを取得
 logger = logging.getLogger(__name__)
 
+# データベース接続を管理する非同期コンテキストマネージャー
+class DatabaseConnection:
+    def __init__(self):
+        self.conn = None
+
+    async def __aenter__(self):
+        self.conn = await aiosqlite.connect(DB_FILE)
+        self.conn.row_factory = aiosqlite.Row # カラム名でアクセスできるようにする
+        logger.debug("データベース接続を取得しました。")
+        return self.conn
+
+    async def __aexit__(self, exc_type, exc, tb):
+        if self.conn:
+            await self.conn.close()
+            logger.debug("データベース接続を閉じました。")
+        # 例外が発生した場合は、そのまま伝播させる (Noneを返さない)
+        return False
+
+
 # データベースファイル名
 DB_FILE = constants.DB_FILE_NAME
 
@@ -118,20 +137,15 @@ async def update_member_monthly_stats(month_key, member_id, duration):
     指定された月とメンバーの組み合わせが既に存在する場合は、total_duration を加算して更新します (ON CONFLICT)。
     存在しない場合は、新しいレコードを挿入します。
     """
-    conn = None
     try:
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
-        await cursor.execute(SQL_UPSERT_MEMBER_MONTHLY_STATS, (month_key, member_id, duration))
-        await conn.commit()
-        logger.info(f"メンバー {member_id} の月間統計を更新しました (月: {month_key}, 期間: {duration})。")
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(SQL_UPSERT_MEMBER_MONTHLY_STATS, (month_key, member_id, duration))
+            await conn.commit()
+            logger.info(f"メンバー {member_id} の月間統計を更新しました (月: {month_key}, 期間: {duration})。")
     except Exception as e:
         logger.error(f"メンバー月間統計の更新中にエラーが発生しました (月: {month_key}, メンバーID: {member_id}, 期間: {duration}): {e}")
         # エラー発生時もロールバックは不要 (ON CONFLICT のため)
-    finally:
-        if conn:
-            await conn.close()
-            logger.debug("データベース接続を閉じました。")
 
 
 async def record_voice_session_to_db(session_start, session_duration, participants):
@@ -139,38 +153,38 @@ async def record_voice_session_to_db(session_start, session_duration, participan
     通話セッションの情報をデータベースに記録します。
     sessions テーブルにセッション情報を挿入し、そのセッションに参加したメンバーを session_participants テーブルに挿入します。
     """
-    conn = None
     try:
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
 
-        month_key = session_start.strftime("%Y-%m")
-        start_time_iso = session_start.isoformat()
+            month_key = session_start.strftime("%Y-%m")
+            start_time_iso = session_start.isoformat()
 
-        # sessions テーブルにセッションを挿入
-        await cursor.execute(SQL_INSERT_SESSION, (month_key, start_time_iso, session_duration))
-        session_id = cursor.lastrowid # 挿入されたセッションのIDを取得
-        logger.info(f"新しいセッションを記録しました。セッションID: {session_id}, 開始時刻: {start_time_iso}, 期間: {session_duration}")
+            # sessions テーブルにセッションを挿入
+            await cursor.execute(SQL_INSERT_SESSION, (month_key, start_time_iso, session_duration))
+            session_id = cursor.lastrowid # 挿入されたセッションのIDを取得
+            logger.info(f"新しいセッションを記録しました。セッションID: {session_id}, 開始時刻: {start_time_iso}, 期間: {session_duration}")
 
-        # session_participants テーブルに参加者を挿入
-        if participants:
-            participant_data = [(session_id, p) for p in participants]
-            await cursor.executemany(SQL_INSERT_SESSION_PARTICIPANTS, participant_data)
-            logger.debug(f"セッション {session_id} の参加者 {participants} を記録しました。")
-        else:
-            logger.debug(f"セッション {session_id} に参加者はいませんでした。")
+            # session_participants テーブルに参加者を挿入
+            if participants:
+                participant_data = [(session_id, p) for p in participants]
+                await cursor.executemany(SQL_INSERT_SESSION_PARTICIPANTS, participant_data)
+                logger.debug(f"セッション {session_id} の参加者 {participants} を記録しました。")
+            else:
+                logger.debug(f"セッション {session_id} に参加者はいませんでした。")
 
-        await conn.commit()
-        logger.debug("データベースの変更をコミットしました。")
+            await conn.commit()
+            logger.debug("データベースの変更をコミットしました。")
     except Exception as e:
         logger.error(f"通話セッションの記録中にエラーが発生しました (開始時刻: {session_start}, 期間: {session_duration}, 参加者: {participants}): {e}")
-        if conn:
-            await conn.rollback() # エラー発生時はロールバック
-            logger.warning("データベースの変更をロールバックしました。")
-    finally:
-        if conn:
-            await conn.close()
-            logger.debug("データベース接続を閉じました。")
+        # aiosqliteのwith構文はデフォルトで例外発生時にロールバックしないため、必要に応じてtry/except内でrollback()を呼び出す
+        try:
+            async with DatabaseConnection() as conn_rollback:
+                 await conn_rollback.rollback()
+                 logger.warning("データベースの変更をロールバックしました。")
+        except Exception as rollback_e:
+             logger.error(f"ロールバック中にエラーが発生しました: {rollback_e}")
+        raise # エラーを再送出
 
 
 # SQL Queries
@@ -220,24 +234,19 @@ async def get_total_call_time(member_id):
     指定されたメンバーの総通話時間をデータベースから取得します。
     通話履歴がない場合はデフォルト値 (0) を返します。
     """
-    conn = None
     try:
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
-        logger.debug(f"メンバー {member_id} の総通話時間を取得します。")
-        await cursor.execute(SQL_GET_TOTAL_CALL_TIME, (member_id,))
-        result = await cursor.fetchone()
-        # 結果がNoneの場合（通話履歴がない場合）はデフォルト値 (0) を返す
-        total_time = result['total'] if result and result['total'] is not None else constants.DEFAULT_TOTAL_DURATION
-        logger.debug(f"メンバー {member_id} の総通話時間: {total_time}")
-        return total_time
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            logger.debug(f"メンバー {member_id} の総通話時間を取得します。")
+            await cursor.execute(SQL_GET_TOTAL_CALL_TIME, (member_id,))
+            result = await cursor.fetchone()
+            # 結果がNoneの場合（通話履歴がない場合）はデフォルト値 (0) を返す
+            total_time = result['total'] if result and result['total'] is not None else constants.DEFAULT_TOTAL_DURATION
+            logger.debug(f"メンバー {member_id} の総通話時間: {total_time}")
+            return total_time
     except Exception as e:
         logger.error(f"メンバー {member_id} の総通話時間取得中にエラーが発生しました: {e}")
         return constants.DEFAULT_TOTAL_DURATION # エラー発生時はデフォルト値を返す
-    finally:
-        if conn:
-            await conn.close()
-            logger.debug("データベース接続を閉じました。")
 
 
 async def get_guild_settings(guild_id):
@@ -245,24 +254,23 @@ async def get_guild_settings(guild_id):
     指定されたギルドの設定情報をデータベースから取得します。
     設定が存在しない場合はデフォルト値を返します。
     """
-    conn = None
     try:
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
-        logger.debug(f"ギルド {guild_id} の設定を取得します。")
-        await cursor.execute(SQL_GET_GUILD_SETTINGS, (str(guild_id),))
-        settings = await cursor.fetchone()
-        if settings:
-            logger.debug(f"ギルド {guild_id} の設定が見つかりました: {dict(settings)}")
-            return settings
-        else:
-            logger.debug(f"ギルド {guild_id} の設定が見つかりませんでした。デフォルト値を返します。")
-            # 設定がない場合はデフォルト値を返す (単位:分)
-            return {
-                constants.COLUMN_GUILD_ID: str(guild_id),
-                constants.COLUMN_LONELY_TIMEOUT_MINUTES: constants.DEFAULT_LONELY_TIMEOUT_MINUTES,
-                constants.COLUMN_REACTION_WAIT_MINUTES: constants.DEFAULT_REACTION_WAIT_MINUTES
-            }
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            logger.debug(f"ギルド {guild_id} の設定を取得します。")
+            await cursor.execute(SQL_GET_GUILD_SETTINGS, (str(guild_id),))
+            settings = await cursor.fetchone()
+            if settings:
+                logger.debug(f"ギルド {guild_id} の設定が見つかりました: {dict(settings)}")
+                return settings
+            else:
+                logger.debug(f"ギルド {guild_id} の設定が見つかりませんでした。デフォルト値を返します。")
+                # 設定がない場合はデフォルト値を返す (単位:分)
+                return {
+                    constants.COLUMN_GUILD_ID: str(guild_id),
+                    constants.COLUMN_LONELY_TIMEOUT_MINUTES: constants.DEFAULT_LONELY_TIMEOUT_MINUTES,
+                    constants.COLUMN_REACTION_WAIT_MINUTES: constants.DEFAULT_REACTION_WAIT_MINUTES
+                }
     except Exception as e:
         logger.error(f"ギルド {guild_id} の設定取得中にエラーが発生しました: {e}")
         # エラー発生時はデフォルト値を返す
@@ -271,10 +279,6 @@ async def get_guild_settings(guild_id):
             constants.COLUMN_LONELY_TIMEOUT_MINUTES: constants.DEFAULT_LONELY_TIMEOUT_MINUTES,
             constants.COLUMN_REACTION_WAIT_MINUTES: constants.DEFAULT_REACTION_WAIT_MINUTES
         }
-    finally:
-        if conn:
-            await conn.close()
-            logger.debug("データベース接続を閉じました。")
 
 
 async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_wait_minutes=None):
@@ -282,56 +286,57 @@ async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_
     指定されたギルドの設定情報を更新または挿入します (UPSERT)。
     設定が存在しない場合は新しいレコードを挿入し、存在する場合は指定された値を更新します。
     """
-    conn = None
     try:
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
-        logger.info(f"ギルド {guild_id} の設定を更新します。lonely_timeout_minutes: {lonely_timeout_minutes}, reaction_wait_minutes: {reaction_wait_minutes}")
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            logger.info(f"ギルド {guild_id} の設定を更新します。lonely_timeout_minutes: {lonely_timeout_minutes}, reaction_wait_minutes: {reaction_wait_minutes}")
 
-        # 現在の設定を取得して、更新されないパラメータのデフォルト値を決定
-        settings = await get_guild_settings(guild_id)
+            # 現在の設定を取得して、更新されないパラメータのデフォルト値を決定
+            # ここでget_guild_settingsを呼び出すと、その内部でもDatabaseConnectionが使われるため、
+            # 意図しない多重接続やデッドロックの可能性はないか注意が必要ですが、
+            # get_guild_settingsは単にSELECTを行うだけなので、ここでは問題ないと判断します。
+            settings = await get_guild_settings(guild_id)
 
-        set_clauses = []
-        params = [str(guild_id)] # guild_id は ON CONFLICT のために最初に追加
+            set_clauses = []
+            params = [str(guild_id)] # guild_id は ON CONFLICT のために最初に追加
 
-        # INSERT 部分の VALUES (?, ?, ?) に対応するパラメータ
-        insert_params = [str(guild_id)]
+            # INSERT 部分の VALUES (?, ?, ?) に対応するパラメータ
+            insert_params = [str(guild_id)]
 
-        if lonely_timeout_minutes is not None:
-            set_clauses.append(SQL_UPSERT_SETTINGS_UPDATE_SET_LONELY)
-            params.append(lonely_timeout_minutes)
-            insert_params.append(lonely_timeout_minutes)
-        else:
-            insert_params.append(settings[constants.COLUMN_LONELY_TIMEOUT_MINUTES])
+            if lonely_timeout_minutes is not None:
+                set_clauses.append(SQL_UPSERT_SETTINGS_UPDATE_SET_LONELY)
+                params.append(lonely_timeout_minutes)
+                insert_params.append(lonely_timeout_minutes)
+            else:
+                insert_params.append(settings[constants.COLUMN_LONELY_TIMEOUT_MINUTES])
 
-        if reaction_wait_minutes is not None:
-            set_clauses.append(SQL_UPSERT_SETTINGS_UPDATE_SET_REACTION)
-            params.append(reaction_wait_minutes)
-            insert_params.append(reaction_wait_minutes)
-        else:
-            insert_params.append(settings[constants.COLUMN_REACTION_WAIT_MINUTES])
+            if reaction_wait_minutes is not None:
+                set_clauses.append(SQL_UPSERT_SETTINGS_UPDATE_SET_REACTION)
+                params.append(reaction_wait_minutes)
+                insert_params.append(reaction_wait_minutes)
+            else:
+                insert_params.append(settings[constants.COLUMN_REACTION_WAIT_MINUTES])
 
-        # ON CONFLICT DO UPDATE SET の部分を構築
-        update_sql = SQL_UPSERT_SETTINGS_INSERT + SQL_UPSERT_SETTINGS_ON_CONFLICT
-        update_sql += ", ".join(set_clauses)
+            # ON CONFLICT DO UPDATE SET の部分を構築
+            update_sql = SQL_UPSERT_SETTINGS_INSERT + SQL_UPSERT_SETTINGS_ON_CONFLICT
+            update_sql += ", ".join(set_clauses)
 
-        # パラメータの順序を調整: INSERT のパラメータ + UPDATE のパラメータ
-        final_params = insert_params + params[1:] # params[0] は guild_id で重複するため除外
+            # パラメータの順序を調整: INSERT のパラメータ + UPDATE のパラメータ
+            final_params = insert_params + params[1:] # params[0] は guild_id で重複するため除外
 
-        logger.debug(f"実行するSQL: {update_sql}, パラメータ: {final_params}")
-        await cursor.execute(update_sql, final_params)
-        await conn.commit()
-        logger.info(f"ギルド {guild_id} の設定を更新しました。")
+            logger.debug(f"実行するSQL: {update_sql}, パラメータ: {final_params}")
+            await cursor.execute(update_sql, final_params)
+            await conn.commit()
+            logger.info(f"ギルド {guild_id} の設定を更新しました。")
     except Exception as e:
         logger.error(f"ギルド {guild_id} の設定更新中にエラーが発生しました: {e}")
-        if conn:
-            await conn.rollback() # エラー発生時はロールバック
-            logger.warning("データベースの変更をロールバックしました。")
+        try:
+            async with DatabaseConnection() as conn_rollback:
+                 await conn_rollback.rollback()
+                 logger.warning("データベースの変更をロールバックしました。")
+        except Exception as rollback_e:
+             logger.error(f"ロールバック中にエラーが発生しました: {rollback_e}")
         raise # エラーを再送出
-    finally:
-        if conn:
-            await conn.close()
-            logger.debug("データベース接続を閉じました。")
 
 async def close_db(conn):
     """
