@@ -15,18 +15,18 @@ CHANNELS_FILE = constants.CHANNELS_FILE_NAME
 
 def save_channels_to_file():
     """通知チャンネル設定をファイルに保存する"""
-    logger.info(f"通知チャンネル設定をファイル '{CHANNELS_FILE}' に保存します。")
+    logger.info(f"Saving notification channel settings to file '{CHANNELS_FILE}'.")
     try:
         with open(CHANNELS_FILE, "w") as f:
             json.dump(_server_notification_channels, f)
-        logger.debug("通知チャンネル設定の保存が完了しました。")
+        logger.debug("Notification channel settings saved successfully.")
     except Exception as e:
-        logger.error(f"通知チャンネル設定のファイル '{CHANNELS_FILE}' への保存中にエラーが発生しました: {e}")
+        logger.error(f"An error occurred while saving notification channel settings to file '{CHANNELS_FILE}': {e}")
 
 
 def load_channels_from_file():
     """ファイルから通知チャンネル設定を読み込む"""
-    logger.info(f"通知チャンネル設定をファイル '{CHANNELS_FILE}' から読み込みます。")
+    logger.info(f"Loading notification channel settings from file '{CHANNELS_FILE}'.")
     global _server_notification_channels
     if os.path.exists(CHANNELS_FILE):
         try:
@@ -34,37 +34,37 @@ def load_channels_from_file():
                 content = f.read().strip()
                 if content:
                     _server_notification_channels = json.loads(content)
-                    logger.debug(f"ファイル '{CHANNELS_FILE}' から通知チャンネル設定を読み込みました。")
+                    logger.debug(f"Loaded notification channel settings from file '{CHANNELS_FILE}'.")
                 else:
                     _server_notification_channels = {}
-                    logger.debug(f"ファイル '{CHANNELS_FILE}' は空でした。空の設定をロードします。")
+                    logger.debug(f"File '{CHANNELS_FILE}' was empty. Loading empty settings.")
         except json.JSONDecodeError:
-            logger.error(f"エラー: {CHANNELS_FILE} の読み込みに失敗しました。JSON形式が不正です。")
+            logger.error(f"Error: Failed to load {CHANNELS_FILE}. Invalid JSON format.")
             _server_notification_channels = {}
         except Exception as e:
-            logger.error(f"通知チャンネル設定のファイル '{CHANNELS_FILE}' からの読み込み中にエラーが発生しました: {e}")
+            logger.error(f"An error occurred while loading notification channel settings from file '{CHANNELS_FILE}': {e}")
             _server_notification_channels = {}
     else:
         _server_notification_channels = {}
-        logger.info(f"通知チャンネル設定ファイル '{CHANNELS_FILE}' が見つかりませんでした。空の設定をロードします。")
+        logger.info(f"Notification channel settings file '{CHANNELS_FILE}' not found. Loading empty settings.")
 
     # JSONに保存されるキーは文字列になるため、読み込み後も辞書のキーを文字列に統一する
     _server_notification_channels = {str(guild_id): channel_id for guild_id, channel_id in _server_notification_channels.items()}
-    logger.debug(f"ロードされた通知チャンネル設定: {_server_notification_channels}")
+    logger.debug(f"Loaded notification channel settings: {_server_notification_channels}")
 
 
 def get_notification_channel_id(guild_id: int):
     """指定されたギルドの通知チャンネルIDを取得する"""
     guild_id_str = str(guild_id)
     channel_id = _server_notification_channels.get(guild_id_str)
-    logger.debug(f"ギルド {guild_id} の通知チャンネルIDを取得しました: {channel_id}")
+    logger.debug(f"Fetched notification channel ID for guild {guild_id}: {channel_id}")
     return channel_id
 
 def set_notification_channel_id(guild_id: int, channel_id: int):
     """指定されたギルドの通知チャンネルIDを設定する"""
     guild_id_str = str(guild_id)
     _server_notification_channels[guild_id_str] = channel_id
-    logger.info(f"ギルド {guild_id} の通知チャンネルIDを {channel_id} に設定しました。")
+    logger.info(f"Set notification channel ID for guild {guild_id} to {channel_id}.")
     save_channels_to_file()
 
 # 初期ロード

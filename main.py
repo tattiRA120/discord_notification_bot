@@ -22,7 +22,7 @@ logging.basicConfig(level=log_level, format=constants.LOGGING_FORMAT)
 # 設定の読み込み (環境変数からトークンを取得)
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 if TOKEN is None:
-    logging.error("DISCORD_BOT_TOKEN 環境変数が設定されていません。")
+    logging.error("DISCORD_BOT_TOKEN environment variable is not set.")
     exit(1) # トークンがない場合は終了
 
 # インテントの設定
@@ -53,29 +53,29 @@ async def on_ready():
     # VoiceEvents Cog は sleep_check_manager と voice_state_manager を必要とする
     voice_events_cog = VoiceEvents(bot, sleep_check_manager, voice_state_manager)
     await bot.add_cog(voice_events_cog)
-    logging.info("VoiceEvents Cog を追加しました。")
+    logging.info("VoiceEvents Cog added.")
 
     # BotCommands のインスタンスを作成 (Cogとしては追加しない)
     bot_commands_instance = BotCommands(bot, sleep_check_manager, voice_state_manager)
-    logging.info("BotCommands インスタンスを作成しました。")
+    logging.info("BotCommands instance created.")
 
     # BotTasks Cog は bot_commands_instance を必要とする
     tasks_cog = BotTasks(bot, bot_commands_instance)
     await bot.add_cog(tasks_cog)
-    logging.info("BotTasks Cog を追加しました。")
+    logging.info("BotTasks Cog added.")
 
     # 定期実行タスクの開始
     tasks_cog.send_monthly_stats_task.start()
     tasks_cog.send_annual_stats_task.start()
-    logging.info("定期実行タスクを開始しました。")
+    logging.info("Scheduled tasks started.")
 
     # コマンドの手動登録と同期
     # BotCommands Cog を bot.add_cog() で追加するとコマンド同期がうまくいかないため、
     # ここでは BotCommands のインスタンスを作成し、各コマンドを手動でツリーに追加しています。
-    logging.info("全ての参加ギルドに対してコマンドの手動登録と同期を開始します。")
+    logging.info("Starting manual command registration and synchronization for all joined guilds.")
     synced_guild_count = 0
     for guild in bot.guilds:
-        logging.info(f'ギルド {guild.id} ({guild.name}) のコマンド登録を開始します。')
+        logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
             # ギルドコマンドとしてツリーに追加
             bot.tree.add_command(bot_commands_instance.monthly_stats_callback, guild=guild)
@@ -89,13 +89,13 @@ async def on_ready():
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)
-            logging.info(f'ギルド {guild.id} ({guild.name}) のコマンド同期に成功しました。同期されたコマンド数: {len(synced_commands)}')
+            logging.info(f'Successfully synced commands for guild {guild.id} ({guild.name}). Synced command count: {len(synced_commands)}')
             synced_guild_count += 1
 
         except Exception as e:
-            logging.error(f'ギルド {guild.id} ({guild.name}) のコマンド登録または同期に失敗しました: {e}')
+            logging.error(f'Failed to register or sync commands for guild {guild.id} ({guild.name}): {e}')
 
-    logging.info(f'コマンド登録と同期が完了しました。{synced_guild_count} 個のギルドで同期に成功しました。')
+    logging.info(f'Command registration and synchronization completed. Successfully synced in {synced_guild_count} guilds.')
     logging.info('Bot is ready.')
 
 # Botの実行
