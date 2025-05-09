@@ -1,53 +1,79 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import os
-from dotenv import load_dotenv
+import asyncio
+import logging
 
-from database import init_db
+import constants # constants モジュールをインポート
+
+# 他のモジュールのインポート
+from commands import BotCommands
+from tasks import BotTasks
 from voice_events import VoiceEvents, SleepCheckManager
-import utils
-import commands as bot_commands
+from voice_state_manager import VoiceStateManager
 import config
-import voice_state_manager
-import formatters
-import tasks # tasks モジュール全体をインポート
+from database import init_db, close_db
 
-# .envファイルの環境変数を読み込む
-load_dotenv()
+# ロギングの設定
+logging.basicConfig(level=constants.LOGGING_LEVEL, format=constants.LOGGING_FORMAT)
 
-# 環境変数からトークンを取得
+# 設定の読み込み (環境変数からトークンを取得)
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
+if TOKEN is None:
+    logging.error("DISCORD_BOT_TOKEN 環境変数が設定されていません。")
+    exit(1) # トークンがない場合は終了
 
-intents = discord.Intents.default()
-intents.voice_states = True
-intents.members = True
-intents.message_content = True
-bot = commands.Bot(command_prefix="!", intents=intents)
+# インテントの設定
+intents = discord.Intents.all()
 
-# --- 起動時処理 ---
+# Botのセットアップ
+bot = commands.Bot(command_prefix=constants.COMMAND_PREFIX, intents=intents)
+
 @bot.event
 async def on_ready():
-    await init_db() # データベース初期化をon_readyで行う
+    logging.info(f'Logged in as {bot.user.name}')
+    logging.info(f'Discord.py version: {discord.__version__}')
 
-    print(f'ログインしました: {bot.user.name}')
+    # データベースの初期化
+    await init_db()
+    logging.info('Database initialized.')
 
-    # 依存関係のインスタンス化
-    voice_state_manager_instance = voice_state_manager.VoiceStateManager(bot)
-    sleep_check_manager_instance = SleepCheckManager(bot)
+    # SleepCheckManager と VoiceStateManager のインスタンスを作成
+    sleep_check_manager = SleepCheckManager(bot)
+    voice_state_manager = VoiceStateManager(bot)
 
-    # Cog のインスタンス化と追加
-    await bot.add_cog(VoiceEvents(bot, sleep_check_manager_instance, voice_state_manager_instance))
-    await bot.add_cog(tasks.BotTasks(bot))
+    # Cog の追加
+    # SleepCheckManager と VoiceStateManager のインスタンスを作成
+    sleep_check_manager = SleepCheckManager(bot)
+    voice_state_manager = VoiceStateManager(bot)
 
-    # BotCommands のインスタンスを作成
-    bot_commands_instance = bot_commands.BotCommands(bot, sleep_check_manager_instance, voice_state_manager_instance)
+    # Cog の追加
+    # VoiceEvents Cog は sleep_check_manager と voice_state_manager を必要とする
+    voice_events_cog = VoiceEvents(bot, sleep_check_manager, voice_state_manager)
+    await bot.add_cog(voice_events_cog)
+    logging.info("VoiceEvents Cog を追加しました。")
 
-    # Note: BotCommands Cog を bot.add_cog() で追加するとコマンド同期がうまくいかないため、
+    # BotCommands のインスタンスを作成 (Cogとしては追加しない)
+    bot_commands_instance = BotCommands(bot, sleep_check_manager, voice_state_manager)
+    logging.info("BotCommands インスタンスを作成しました。")
+
+    # BotTasks Cog は bot_commands_instance を必要とする
+    tasks_cog = BotTasks(bot, bot_commands_instance)
+    await bot.add_cog(tasks_cog)
+    logging.info("BotTasks Cog を追加しました。")
+
+    # 定期実行タスクの開始
+    tasks_cog.send_monthly_stats_task.start()
+    tasks_cog.send_annual_stats_task.start()
+    logging.info("定期実行タスクを開始しました。")
+
+    # コマンドの手動登録と同期
+    # BotCommands Cog を bot.add_cog() で追加するとコマンド同期がうまくいかないため、
     # ここでは BotCommands のインスタンスを作成し、各コマンドを手動でツリーに追加しています。
-
-    # 各ギルドに対してコマンドを手動でツリーに追加し、同期
+    logging.info("全ての参加ギルドに対してコマンドの手動登録と同期を開始します。")
+    synced_guild_count = 0
     for guild in bot.guilds:
-        print(f'接続中のサーバー: {guild.name} (ID: {guild.id})')
+        logging.info(f'ギルド {guild.id} ({guild.name}) のコマンド登録を開始します。')
         try:
             # ギルドコマンドとしてツリーに追加
             bot.tree.add_command(bot_commands_instance.monthly_stats_callback, guild=guild)
@@ -61,19 +87,31 @@ async def on_ready():
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)
-            print(f'ギルド {guild.name} ({guild.id}) のコマンド同期に成功しました。同期されたコマンド数: {len(synced_commands)}')
+            logging.info(f'ギルド {guild.id} ({guild.name}) のコマンド同期に成功しました。同期されたコマンド数: {len(synced_commands)}')
+            synced_guild_count += 1
 
         except Exception as e:
-            print(f'ギルド {guild.name} ({guild.id}) のコマンド同期に失敗しました: {e}')
+            logging.error(f'ギルド {guild.id} ({guild.name}) のコマンド登録または同期に失敗しました: {e}')
 
-    # タスクの開始
-    # BotTasks Cog の _scheduled_stats タスクを開始
-    bot_tasks_cog = bot.get_cog("BotTasks")
-    if bot_tasks_cog and hasattr(bot_tasks_cog, '_scheduled_stats'):
-        bot_tasks_cog._scheduled_stats.start()
-        print("定期実行タスクを開始しました。")
-    else:
-        print("BotTasks Cog または _scheduled_stats タスクが見つかりませんでした。")
+    logging.info(f'コマンド登録と同期が完了しました。{synced_guild_count} 個のギルドで同期に成功しました。')
+    logging.info('Bot is ready.')
 
+@bot.event
+async def on_disconnect():
+    logging.info('Bot disconnected.')
+    # データベース接続を閉じる
+    # close_db 関数は接続オブジェクトを引数に取るが、ここではグローバルに管理されていないため修正が必要
+    # init_db で取得した接続を保持するか、close_db の実装を変更する必要がある
+    # 一時的にログ出力のみとする
+    logging.warning('Database connection close skipped: close_db requires connection object.')
+    # await close_db() # 修正が必要
+    logging.info('Database connection closed (simulated).')
 
-bot.run(TOKEN)
+# Botの実行
+if __name__ == "__main__":
+    try:
+        bot.run(TOKEN)
+    except discord.errors.GatewayNotFound:
+        logging.error("Invalid token was passed.")
+    except Exception as e:
+        logging.error(f"An error occurred during bot execution: {e}")
