@@ -32,6 +32,9 @@ Role: Manages the state and logic related to voice channels.
 [file: backup_db.py]
 Role: Handles the database backup process.
 
+[file: constants.py]
+Role: Defines constant values used throughout the bot.
+
 # You can also add more specific rules or information, e.g.,
 # [rule: Avoid direct database access outside of database.py]
 # Database operations should be performed through functions within database.py.
