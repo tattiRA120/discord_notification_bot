@@ -76,15 +76,18 @@ async def on_ready():
     # BotStatusUpdater のタスクは BotStatusUpdater クラス内で管理されるため、ここでは開始しない
     logging.info("Scheduled tasks started.")
 
-    # コマンドの手動登録と同期
-    # BotCommands Cog を bot.add_cog() で追加するとコマンド同期がうまくいかないため、
-    # ここでは BotCommands のインスタンスを作成し、各コマンドを手動でツリーに追加しています。
+    # スラッシュコマンドの手動登録と同期
+
+    # 通常、Cogとして追加することでスラッシュコマンドは自動的に登録・同期されますが、
+    # BotCommands Cog を bot.add_cog() で追加した場合にコマンド同期が安定しない問題が確認されています。
+    # そのため、現状では回避策として、あえて各コマンドをギルドコマンドとして手動でツリーに追加し、同期を行っています。
+    # この方法により、コマンドの登録と同期のプロセスをより確実に制御することを目指しています。
     logging.info("Starting manual command registration and synchronization for all joined guilds.")
     synced_guild_count = 0
     for guild in bot.guilds:
         logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
-            # ギルドコマンドとしてツリーに追加
+            # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
             bot.tree.add_command(bot_commands_instance.monthly_stats_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.total_time_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.call_ranking_callback, guild=guild)
