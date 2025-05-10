@@ -8,7 +8,7 @@ import logging
 from database import (
     get_db_connection, get_total_call_time, get_guild_settings, update_guild_settings,
     get_monthly_voice_sessions, get_monthly_member_stats, get_annual_voice_sessions, get_annual_member_total_stats,
-    get_participants_by_session_ids
+    get_participants_by_session_ids, get_total_call_time_for_guild_members
 )
 import config
 import voice_state_manager
@@ -281,17 +281,21 @@ class BotCommands(commands.Cog):
         members = guild.members
         logger.debug(f"Fetching total call times for {len(members)} members in guild {guild.id}")
 
-        # サーバー内の全メンバーの通話時間を取得
-        member_call_times = {}
-        for member in members:
-            # データベースエラーはdatabase.py内で処理され、デフォルト値 (0) が返されます。
-            total_seconds = await get_total_call_time(member.id)
-            if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを対象
-                member_call_times[member.id] = total_seconds
-        logger.debug(f"Found call times for {len(member_call_times)} members with > 0 call time.")
+        # サーバー内の全メンバーの通話時間をまとめて取得
+        member_ids = [member.id for member in members]
+        # データベースエラーはdatabase.py内で処理され、空の辞書が返される可能性があります。
+        member_call_times = await get_total_call_time_for_guild_members(member_ids)
+        logger.debug(f"Fetched total call times for {len(member_call_times)} members.")
+
+        # 通話時間が0より大きいメンバーのみを対象にフィルタリング
+        filtered_member_call_times = {
+            member_id: total_seconds for member_id, total_seconds in member_call_times.items()
+            if total_seconds > 0
+        }
+        logger.debug(f"Found call times for {len(filtered_member_call_times)} members with > 0 call time.")
 
         # 通話時間でメンバーを降順にソートしてランキングを作成
-        sorted_members = sorted(member_call_times.items(), key=lambda x: x[1], reverse=True)
+        sorted_members = sorted(filtered_member_call_times.items(), key=lambda x: x[1], reverse=True)
         logger.debug(f"Sorted {len(sorted_members)} members for ranking.")
 
         # ランキングデータがあるか確認し、結果を送信

@@ -428,6 +428,42 @@ async def get_annual_member_total_stats(year: str):
         logger.error(f"An error occurred while fetching annual member total stats for year {year}: {e}")
         return {} # エラー発生時は空の辞書を返す
 
+async def get_total_call_time_for_guild_members(member_ids: list):
+    """
+    指定されたメンバーIDリストに含まれるメンバーの総通話時間を取得します。
+    """
+    if not member_ids:
+        return {}
+
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            logger.debug(f"Fetching total call time for {len(member_ids)} members.")
+
+            # 指定されたメンバーIDの総通話時間をまとめて取得
+            placeholders = ','.join('?' for _ in member_ids)
+            await cursor.execute(f"""
+                SELECT member_id, SUM({constants.COLUMN_TOTAL_DURATION}) as total
+                FROM {constants.TABLE_MEMBER_MONTHLY_STATS}
+                WHERE {constants.COLUMN_MEMBER_ID} IN ({placeholders})
+                GROUP BY {constants.COLUMN_MEMBER_ID}
+            """, member_ids)
+            results = await cursor.fetchall()
+
+            # メンバーIDをキーとした辞書に変換
+            member_call_times = {row['member_id']: row['total'] for row in results}
+
+            # 通話時間が0のメンバーも結果に含める（辞書に存在しない場合は0とする）
+            for member_id in member_ids:
+                if member_id not in member_call_times:
+                    member_call_times[member_id] = constants.DEFAULT_TOTAL_DURATION
+
+            logger.debug(f"Fetched total call times for {len(member_call_times)} members.")
+            return member_call_times
+    except Exception as e:
+        logger.error(f"An error occurred while fetching total call time for guild members: {e}")
+        return {} # エラー発生時は空の辞書を返す
+
 
 async def get_guild_settings(guild_id):
     """
