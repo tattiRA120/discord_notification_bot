@@ -116,11 +116,11 @@ class BotCommands(commands.Cog):
         # 作成したEmbedと表示用の月を返す
         return embed, month_display
 
-    # --- 年間統計作成用ヘルパー関数 ---
-    # 指定された年度の通話統計情報をデータベースから取得し、整形してEmbedを作成します。
+    # --- 年間統計データ取得・処理・作成用ヘルパー関数 ---
+    # 指定された年度の通話統計情報をデータベースから取得し、整形して返します。
     # データベース操作、データ集計、最長通話やランキングの算出を含みます。
-    async def _create_annual_stats_embed(self, guild, year: str):
-        logger.info(f"Creating annual stats embed for guild {guild.id}, year {year}")
+    async def get_and_process_annual_stats_data(self, guild, year: str):
+        logger.info(f"Fetching and processing annual statistics for guild {guild.id}, year {year}")
 
         # database.py から指定された年度の全セッションを取得
         sessions_data = await get_annual_voice_sessions(year)
@@ -134,7 +134,7 @@ class BotCommands(commands.Cog):
         # セッションデータがない場合はNoneを返す
         if not sessions_data:
             logger.info(f"No sessions found for year {year}")
-            return None, year_display
+            return None, year_display, None, None, None, None
 
         # 年間合計通話時間、セッション数、平均通話時間の計算
         total_duration = sum(sess["duration"] for sess in sessions_data)
@@ -174,14 +174,22 @@ class BotCommands(commands.Cog):
         ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
         logger.debug(f"Annual ranking text generated:\n{ranking_text}")
 
+        # 処理したデータを返す
+        return year_display, avg_duration, longest_info, ranking_text, sessions_data, members_total
+
+    # --- 年間統計Embed作成用ヘルパー関数 ---
+    # get_and_process_annual_stats_data から取得した情報をもとに、年間統計表示用のEmbedを作成します。
+    async def _create_annual_stats_embed(self, year_display: str, avg_duration: float, longest_info: str, ranking_text: str):
+        logger.info(f"Creating annual stats embed for {year_display}")
+
         # Embedを作成し、フィールドを追加
         embed = discord.Embed(title=f"【{year_display}】年間通話統計情報", color=constants.EMBED_COLOR_SUCCESS)
         embed.add_field(name="年間: 平均通話時間", value=f"{formatters.format_duration(avg_duration)}", inline=False)
         embed.add_field(name="年間: 最長通話", value=longest_info, inline=False)
         embed.add_field(name="年間: 通話時間ランキング", value=ranking_text, inline=False)
         logger.debug("Annual stats embed created successfully.")
-        # 作成したEmbedと表示用の年を返す
-        return embed, year_display
+        # 作成したEmbedを返す
+        return embed
 
 
 
@@ -378,15 +386,18 @@ class BotCommands(commands.Cog):
             year = str(now.year)
         logger.debug(f"Year not specified, using current year: {year}")
 
-        # 年間統計Embedを作成
-        embed, display = await self._create_annual_stats_embed(interaction.guild, year)
-        # Embedが作成できたか確認し、結果を送信
-        if embed:
+        # 年間統計データを取得・処理
+        year_display, avg_duration, longest_info, ranking_text, sessions_data, members_total = await self.get_and_process_annual_stats_data(interaction.guild, year)
+
+        # データが取得できたか確認し、結果を送信
+        if sessions_data:
+            # 年間統計Embedを作成
+            embed = await self._create_annual_stats_embed(year_display, avg_duration, longest_info, ranking_text)
             await interaction.response.send_message(embed=embed, ephemeral=True)
             logger.info(f"/debug_annual_stats command executed successfully for year {year}")
         else:
             logger.info(f"No annual stats found for year {year}")
-            await interaction.response.send_message(f"{display}{constants.MESSAGE_NO_CALL_RECORDS}", ephemeral=True)
+            await interaction.response.send_message(f"{year_display}{constants.MESSAGE_NO_CALL_RECORDS}", ephemeral=True)
         logger.info("/debug_annual_stats command finished.")
 
     # 管理者用：寝落ち確認設定変更コマンド
