@@ -37,8 +37,14 @@ async def on_ready():
     logging.info(f'Discord.py version: {discord.__version__}')
 
     # データベースの初期化
-    await init_db()
-    logging.info('Database initialized.')
+    try:
+        await init_db()
+        logging.info('Database initialized.')
+    except Exception as e:
+        logging.error(f"Database initialization failed: {e}")
+        # エラー発生時はボットを終了する
+        await bot.close()
+        exit(1)
 
     # SleepCheckManager のインスタンスを作成
     sleep_check_manager = SleepCheckManager(bot)
