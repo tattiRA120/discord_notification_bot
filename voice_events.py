@@ -283,8 +283,8 @@ class VoiceEvents(commands.Cog):
                 self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
 
         # VoiceStateManager に処理を委譲
-        await self.voice_state_manager.handle_member_join(member, channel_after)
-        logger.debug(f"VoiceStateManager.handle_member_join processing complete. Member: {member.id}, Channel: {channel_after.id}")
+        await self.voice_state_manager.notify_member_joined(member, channel_after)
+        logger.debug(f"VoiceStateManager.notify_member_joined processing complete. Member: {member.id}, Channel: {channel_after.id}")
 
         # ボットによってミュートされたメンバーが再入室した場合、ミュートを解除
         if member.id in self.sleep_check_manager.bot_muted_members:
@@ -352,8 +352,8 @@ class VoiceEvents(commands.Cog):
                 self.sleep_check_manager.add_lonely_channel(guild_id, channel_before.id, lonely_member.id, task)
 
         # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
-        ended_sessions_data = await self.voice_state_manager.handle_member_leave(member, channel_before)
-        logger.debug(f"VoiceStateManager.handle_member_leave processing complete. Member: {member.id}, Channel: {channel_before.id}. Ended sessions count: {len(ended_sessions_data)}")
+        ended_sessions_data = await self.voice_state_manager.notify_member_left(member, channel_before)
+        logger.debug(f"VoiceStateManager.notify_member_left processing complete. Member: {member.id}, Channel: {channel_before.id}. Ended sessions count: {len(ended_sessions_data)}")
         # VoiceStateManager から統計更新が必要なデータが返された場合、各メンバーごとに処理
         for member_id, duration, join_time in ended_sessions_data:
             logger.debug(f"Starting stats update process. Member: {member_id}, Duration: {duration}, Join time: {join_time}")
@@ -400,8 +400,8 @@ class VoiceEvents(commands.Cog):
                 self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
 
         # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
-        ended_sessions_from_before, joined_session_data = await self.voice_state_manager.handle_member_move(member, channel_before, channel_after)
-        logger.debug(f"VoiceStateManager.handle_member_move processing complete. Member: {member.id}, Source: {channel_before.id}, Destination: {channel_after.id}. Ended sessions count: {len(ended_sessions_from_before)}, Joined session data: {joined_session_data is not None}")
+        ended_sessions_from_before, joined_session_data = await self.voice_state_manager.notify_member_moved(member, channel_before, channel_after)
+        logger.debug(f"VoiceStateManager.notify_member_moved processing complete. Member: {member.id}, Source: {channel_before.id}, Destination: {channel_after.id}. Ended sessions count: {len(ended_sessions_from_before)}, Joined session data: {joined_session_data is not None}")
 
         # 移動元での退出による統計更新とマイルストーン通知
         for member_id_leave, duration_leave, join_time_leave in ended_sessions_from_before:

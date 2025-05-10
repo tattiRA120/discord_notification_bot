@@ -42,13 +42,13 @@ class VoiceStateManager:
         self.update_call_status_task = tasks.loop(seconds=constants.STATUS_UPDATE_INTERVAL_SECONDS)(self._update_call_status_task)
         logger.debug(f"Status update task set to run every {constants.STATUS_UPDATE_INTERVAL_SECONDS} seconds.")
 
-    # --- ボイスステート更新ハンドラ ---
-    async def handle_member_join(self, member: discord.Member, channel_after: discord.VoiceChannel):
+    # --- ボイスステート更新通知ハンドラ ---
+    async def notify_member_joined(self, member: discord.Member, channel_after: discord.VoiceChannel):
         """
-        メンバーがボイスチャンネルに参加した時に呼び出されるハンドラ。
-        通話通知機能と2人以上通話状態の記録を処理します。
+        メンバーがボイスチャンネルに参加したことをVoiceStateManagerに通知します。
+        内部状態の更新と関連処理を行います。
         """
-        logger.info(f"handle_member_join: Member {member.id} joined channel {channel_after.id} ({channel_after.name}).")
+        logger.info(f"notify_member_joined: Member {member.id} joined channel {channel_after.id} ({channel_after.name}).")
         guild_id = member.guild.id
         now = datetime.datetime.now(datetime.timezone.utc)
         key = (guild_id, channel_after.id)
@@ -146,12 +146,13 @@ class VoiceStateManager:
                 logger.debug(f"No active two-or-more-member call session in destination channel {channel_after.id} ({guild_id}).")
 
 
-    async def handle_member_leave(self, member: discord.Member, channel_before: discord.VoiceChannel):
+    async def notify_member_left(self, member: discord.Member, channel_before: discord.VoiceChannel):
         """
-        メンバーがボイスチャンネルから退出した時に呼び出されるハンドラ。
-        通話通知機能と2人以上通話状態の記録を処理します。
+        メンバーがボイスチャンネルから退出したことをVoiceStateManagerに通知します。
+        内部状態の更新と関連処理を行います。
+        終了した個別のメンバーセッションデータを返します（統計更新と通知チェックは voice_events.py で行います）。
         """
-        logger.info(f"handle_member_leave: Member {member.id} left channel {channel_before.id} ({channel_before.name}).")
+        logger.info(f"notify_member_left: Member {member.id} left channel {channel_before.id} ({channel_before.name}).")
         guild_id = member.guild.id
         now = datetime.datetime.now(datetime.timezone.utc)
         key = (guild_id, channel_before.id)
@@ -247,12 +248,14 @@ class VoiceStateManager:
 
         return ended_sessions_data # 終了した個別のメンバーセッションデータのリストを返す
 
-    async def handle_member_move(self, member: discord.Member, channel_before: discord.VoiceChannel, channel_after: discord.VoiceChannel):
+    async def notify_member_moved(self, member: discord.Member, channel_before: discord.VoiceChannel, channel_after: discord.VoiceChannel):
         """
-        メンバーがボイスチャンネル間を移動した時に呼び出されるハンドラ。
-        移動元チャンネルからの退出処理と移動先チャンネルへの入室処理を組み合わせます。
+        メンバーがボイスチャンネル間を移動したことをVoiceStateManagerに通知します。
+        内部状態の更新と関連処理を行います。
+        移動元チャンネルで終了した個別のメンバーセッションデータと、
+        移動先チャンネルに参加したメンバーのデータを返します。
         """
-        logger.info(f"handle_member_move: Member {member.id} moved from channel {channel_before.id} ({channel_before.name}) to channel {channel_after.id} ({channel_after.name}).")
+        logger.info(f"notify_member_moved: Member {member.id} moved from channel {channel_before.id} ({channel_before.name}) to channel {channel_after.id} ({channel_after.name}).")
         guild_id = member.guild.id
         now = datetime.datetime.now(datetime.timezone.utc)
         key_before = (guild_id, channel_before.id)
@@ -447,7 +450,7 @@ class VoiceStateManager:
                             # 移動してきたメンバーのデータとしてID、現在の通話時間（この時点では0）、参加時刻を記録
                             joined_session_data = (m.id, 0, now)
                             logger.debug(f"Recorded joined_session_data for moved member {m.id}.")
-                    session_data_after["all_participants"].add(m.id) # 全参加者リストにメンバーを追加
+                    session_data_after["all_participants"].add(m.id) # 全参加者リストに追加
                     logger.debug(f"Added member {m.id} to active_voice_sessions[{key_after}]['all_participants'].")
             else:
                 logger.debug(f"No active two-or-more-member call session in destination channel {channel_after.id} ({guild_id}).")
@@ -586,51 +589,3 @@ class VoiceStateManager:
             logger.warning(f"No active two-or-more-member call session found for channel {channel_id} ({guild_id}). Skipping end process.")
 
         return ended_sessions_data # 終了した個別のメンバーセッションデータのリストを返す
-
-
-    def start_session(self, guild_id: int, channel_id: int, members: list[discord.Member]):
-        """
-        新しい2人以上通話セッションを開始します。
-        voice_events.py でチャンネルにconstants.MIN_MEMBERS_FOR_SESSION人以上になった時に呼び出されます。
-        """
-        logger.info(f"Starting new two-or-more-member call session in channel {channel_id} ({guild_id}).")
-        key = (guild_id, channel_id)
-        now = datetime.datetime.now(datetime.timezone.utc)
-        # 新しいセッションデータを初期化
-        self.active_voice_sessions[key] = {
-            "session_start": now, # セッション開始時刻
-            "current_members": { m.id: now for m in members }, # 現在のメンバーとその参加時刻
-            "all_participants": set(m.id for m in members) # 全参加者リスト
-        }
-        logger.debug(f"Created new active_voice_sessions entry: {key}")
-        # active_status_channels にチャンネルを追加
-        self.active_status_channels.add(key)
-        logger.debug(f"Added channel {key} to active_status_channels.")
-        # ステータス更新タスクが実行中でなければ開始
-        if not self.update_call_status_task.is_running():
-            self.update_call_status_task.start()
-            logger.info("Started bot status update task.")
-
-    def update_session_members(self, guild_id: int, channel_id: int, members: list[discord.Member]):
-        """
-        既存の2人以上通話セッションのメンバーリストを更新します。
-        チャンネルにメンバーが追加された際に呼び出され、新規参加メンバーをセッションに追加します。
-        """
-        logger.info(f"Updating member list for two-or-more-member call session in channel {channel_id} ({guild_id}).")
-        key = (guild_id, channel_id)
-        now = datetime.datetime.now(datetime.timezone.utc)
-        # 指定されたチャンネルの2人以上通話セッションがアクティブな場合
-        if key in self.active_voice_sessions:
-            logger.debug(f"Active session found for channel {key}.")
-            session_data = self.active_voice_sessions[key]
-            # チャンネルにいる各メンバーを確認
-            for m in members:
-                # まだセッションのcurrent_membersリストにいないメンバーであれば追加
-                if m.id not in session_data["current_members"]:
-                    session_data["current_members"][m.id] = now # 参加時刻を記録
-                    logger.debug(f"Added member {m.id} to active_voice_sessions[{key}]['current_members'].")
-                session_data["all_participants"].add(m.id) # 全参加者リストに追加
-                logger.debug(f"Added member {m.id} to active_voice_sessions[{key}]['all_participants'].")
-            logger.debug(f"Member list update complete for channel {key}. Current members: {list(session_data['current_members'].keys())}, All participants: {list(session_data['all_participants'])}")
-        else:
-            logger.warning(f"No active two-or-more-member call session found for channel {channel_id} ({guild_id}). Skipping member list update.")
