@@ -17,9 +17,6 @@ Role: Defines handlers for events related to voice channels (join, leave, mute, 
 [file: database.py]
 Role: Defines functions for accessing and manipulating the SQLite database (connection, query execution, data saving/retrieval). Other files interact with the database through this module.
 
-[file: utils.py]
-Role: Collects general utility functions and helper functions.
-
 [file: config.py]
 Role: Holds configuration-related information for the bot.
 
