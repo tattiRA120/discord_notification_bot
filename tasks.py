@@ -21,6 +21,41 @@ class BotTasks(commands.Cog):
         # タスクは @tasks.loop デコレータによって定義されます。
         # __init__ でタスクを開始する必要はありません。setup_tasks 関数で行います。
 
+    async def _send_stats_to_channel(self, guild, period_display, create_embed_func, embed_title):
+        """
+        共通の統計情報送信ロジック
+
+        Args:
+            guild (discord.Guild): 統計情報を送信するギルドオブジェクト
+            period_display (str): 統計情報の表示期間 (例: "2023年10月", "2023年")
+            create_embed_func (callable): 統計情報Embedを作成する非同期関数
+            embed_title (str): Embedのタイトル
+        """
+        guild_id = guild.id
+        logger.debug(f"Processing stats for guild {guild_id} for period {period_display}")
+        channel_id = config.get_notification_channel_id(guild_id)
+        if channel_id:
+            channel = self.bot.get_channel(channel_id)
+            if channel:
+                logger.debug(f"Sending stats to channel {channel_id} in guild {guild_id}")
+                embed, display_period = await create_embed_func(guild, period_display)
+                if embed:
+                    await channel.send(embed=embed)
+                    logger.info(f"Stats sent successfully for {display_period} in guild {guild_id}")
+                else:
+                    logger.info(f"No stats found for {display_period} in guild {guild_id}")
+                    embed = discord.Embed(
+                        title=embed_title,
+                        description=f"{display_period}{constants.MESSAGE_NO_CALL_RECORDS}",
+                        color=constants.EMBED_COLOR_WARNING
+                    )
+                    await channel.send(embed=embed)
+            else:
+                logger.warning(f"Notification channel {channel_id} not found for guild {guild_id}")
+        else:
+            logger.info(f"No notification channel set for guild {guild_id}")
+
+
     # --- 月間統計情報送信タスク ---
     # 毎日18:00に実行し、日付が1日かチェック
     @tasks.loop(time=datetime.time(hour=constants.STATS_SEND_HOUR, minute=constants.STATS_SEND_MINUTE, tzinfo=ZoneInfo(constants.TIMEZONE_JST)))
@@ -36,29 +71,12 @@ class BotTasks(commands.Cog):
 
             # 各ギルドに対して前月の統計情報を送信
             for guild in self.bot.guilds:
-                guild_id = guild.id
-                logger.debug(f"Processing monthly stats for guild {guild_id}")
-                channel_id = config.get_notification_channel_id(guild_id)
-                if channel_id:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        logger.debug(f"Sending monthly stats to channel {channel_id} in guild {guild_id}")
-                        embed, month_display = await self.bot_commands_cog._create_monthly_stats_embed(guild, previous_month)
-                        if embed:
-                            await channel.send(embed=embed)
-                            logger.info(f"Monthly stats sent successfully for {month_display} in guild {guild_id}")
-                        else:
-                            logger.info(f"No monthly stats found for {month_display} in guild {guild_id}")
-                            embed = discord.Embed(
-                                title=constants.EMBED_TITLE_MONTHLY_STATS,
-                                description=f"{month_display}{constants.MESSAGE_NO_CALL_RECORDS}",
-                                color=constants.EMBED_COLOR_WARNING
-                            )
-                            await channel.send(embed=embed)
-                    else:
-                        logger.warning(f"Notification channel {channel_id} not found for guild {guild_id}")
-                else:
-                    logger.info(f"No notification channel set for guild {guild_id}")
+                await self._send_stats_to_channel(
+                    guild,
+                    previous_month,
+                    self.bot_commands_cog._create_monthly_stats_embed,
+                    constants.EMBED_TITLE_MONTHLY_STATS
+                )
             logger.info("Monthly stats task finished.")
         else:
             logger.debug("Monthly stats task skipped: not the first day of the month.")
@@ -77,29 +95,12 @@ class BotTasks(commands.Cog):
 
             # 各ギルドに対して年間の統計情報を送信
             for guild in self.bot.guilds:
-                guild_id = guild.id
-                logger.debug(f"Processing annual stats for guild {guild_id}")
-                channel_id = config.get_notification_channel_id(guild_id)
-                if channel_id:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        logger.debug(f"Sending annual stats to channel {channel_id} in guild {guild_id}")
-                        embed, year_display = await self.bot_commands_cog._create_annual_stats_embed(guild, year_str)
-                        if embed:
-                            await channel.send(embed=embed)
-                            logger.info(f"Annual stats sent successfully for {year_display} in guild {guild_id}")
-                        else:
-                            logger.info(f"No annual stats found for {year_display} in guild {guild_id}")
-                            embed = discord.Embed(
-                                title=constants.EMBED_TITLE_ANNUAL_STATS,
-                                description=f"{year_display}{constants.MESSAGE_NO_CALL_RECORDS}",
-                                color=constants.EMBED_COLOR_WARNING
-                            )
-                            await channel.send(embed=embed)
-                    else:
-                        logger.warning(f"Notification channel {channel_id} not found for guild {guild_id}")
-                else:
-                    logger.info(f"No notification channel set for guild {guild_id}")
+                await self._send_stats_to_channel(
+                    guild,
+                    year_str,
+                    self.bot_commands_cog._create_annual_stats_embed,
+                    constants.EMBED_TITLE_ANNUAL_STATS
+                )
             logger.info("Annual stats task finished.")
         else:
             logger.debug("Annual stats task skipped: not December 31st.")
