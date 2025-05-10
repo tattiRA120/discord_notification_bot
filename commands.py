@@ -50,10 +50,12 @@ class BotCommands(commands.Cog):
         logger.info(f"Fetching monthly statistics for guild {guild.id}, month {month}")
 
         # database.py から指定された月の全セッションを取得
+        # データベースエラーはdatabase.py内で処理され、空のリストが返されます。
         sessions_data = await get_monthly_voice_sessions(month)
         logger.debug(f"Found {len(sessions_data)} sessions for month {month}")
 
         # database.py から指定された月のメンバー別累計通話時間を取得
+        # データベースエラーはdatabase.py内で処理され、空の辞書が返されます。
         member_stats = await get_monthly_member_stats(month)
         logger.debug(f"Found stats for {len(member_stats)} members for month {month}")
 
@@ -75,6 +77,7 @@ class BotCommands(commands.Cog):
 
             # 最長セッションの参加者を取得
             longest_session_id = longest_session["id"] # セッションIDを取得
+            # データベースエラーはdatabase.py内で処理され、空の辞書が返されます。
             participants_map = await get_participants_by_session_ids([longest_session_id])
             longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
 
@@ -134,10 +137,12 @@ class BotCommands(commands.Cog):
         logger.info(f"Fetching and processing annual statistics for guild {guild.id}, year {year}")
 
         # database.py から指定された年度の全セッションを取得
+        # データベースエラーはdatabase.py内で処理され、空のリストが返されます。
         sessions_data = await get_annual_voice_sessions(year)
         logger.debug(f"Found {len(sessions_data)} sessions for year {year}")
 
         # database.py から指定された年度のメンバー別累計通話時間を取得
+        # データベースエラーはdatabase.py内で処理され、空の辞書が返されます。
         members_total = await get_annual_member_total_stats(year)
         logger.debug(f"Found stats for {len(members_total)} members for year {year}")
 
@@ -161,6 +166,7 @@ class BotCommands(commands.Cog):
 
         # 最長セッションの参加者を取得
         longest_session_id = longest_session["id"] # セッションIDを取得
+        # データベースエラーはdatabase.py内で処理され、空の辞書が返されます。
         participants_map = await get_participants_by_session_ids([longest_session_id])
         longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
 
@@ -244,6 +250,7 @@ class BotCommands(commands.Cog):
         member = member or interaction.user
         logger.debug(f"Checking total time for member: {member.id}")
         # メンバーの総通話時間をデータベースから取得
+        # データベースエラーはdatabase.py内で処理され、デフォルト値 (0) が返されます。
         total_seconds = await get_total_call_time(member.id)
         logger.debug(f"Total time for {member.id}: {total_seconds} seconds")
 
@@ -277,6 +284,7 @@ class BotCommands(commands.Cog):
         # サーバー内の全メンバーの通話時間を取得
         member_call_times = {}
         for member in members:
+            # データベースエラーはdatabase.py内で処理され、デフォルト値 (0) が返されます。
             total_seconds = await get_total_call_time(member.id)
             if total_seconds > 0:  # 通話時間が0より大きいメンバーのみを対象
                 member_call_times[member.id] = total_seconds
@@ -425,6 +433,7 @@ class BotCommands(commands.Cog):
         logger.info(f"Received /set_sleep_check command from {interaction.user.id} in guild {interaction.guild.id} with lonely_timeout_minutes: {lonely_timeout_minutes}, reaction_wait_minutes: {reaction_wait_minutes}")
         # パラメータの指定がない場合は現在の設定を表示
         if lonely_timeout_minutes is None and reaction_wait_minutes is None:
+            # データベースエラーが発生した場合、database.py内で処理されるか、呼び出し元に例外が伝播する可能性があります。
             settings = await get_guild_settings(interaction.guild.id)
             logger.info(f"Displaying current sleep check settings for guild {interaction.guild.id}")
             await interaction.response.send_message(
@@ -446,9 +455,11 @@ class BotCommands(commands.Cog):
             return
 
         # ギルド設定を更新
+        # データベースエラーが発生した場合、database.py内でロールバック処理が行われた後、呼び出し元に例外が伝播する可能性があります。
         await update_guild_settings(interaction.guild.id, lonely_timeout_minutes=lonely_timeout_minutes, reaction_wait_minutes=reaction_wait_minutes)
         logger.info(f"Sleep check settings updated for guild {interaction.guild.id}")
         # 更新後の設定を取得して表示
+        # データベースエラーが発生した場合、database.py内で処理されるか、呼び出し元に例外が伝播する可能性があります。
         settings = await get_guild_settings(interaction.guild.id)
         await interaction.response.send_message(
             constants.MESSAGE_SLEEP_CHECK_SETTINGS_UPDATED +
