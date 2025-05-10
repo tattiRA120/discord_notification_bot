@@ -70,14 +70,17 @@ class BotTasks(commands.Cog):
             logger.debug(f"Calculating stats for previous month: {previous_month}")
 
             # 各ギルドに対して前月の統計情報を送信
-            for guild in self.bot.guilds:
-                await self._send_stats_to_channel(
-                    guild,
-                    previous_month,
-                    self.bot_commands_cog._create_monthly_stats_embed,
-                    constants.EMBED_TITLE_MONTHLY_STATS
-                )
-            logger.info("Monthly stats task finished.")
+            try:
+                for guild in self.bot.guilds:
+                    await self._send_stats_to_channel(
+                        guild,
+                        previous_month,
+                        self.bot_commands_cog._create_monthly_stats_embed,
+                        constants.EMBED_TITLE_MONTHLY_STATS
+                    )
+                logger.info("Monthly stats task finished.")
+            except Exception as e:
+                logger.error(f"An unexpected error occurred in monthly stats task: {e}", exc_info=True)
         else:
             logger.debug("Monthly stats task skipped: not the first day of the month.")
 
@@ -94,13 +97,16 @@ class BotTasks(commands.Cog):
             logger.debug(f"Calculating stats for year: {year_str}")
 
             # 各ギルドに対して年間の統計情報を送信
-            for guild in self.bot.guilds:
-                await self._send_stats_to_channel(
-                    guild,
-                    year_str,
-                    self.bot_commands_cog._create_annual_stats_embed,
-                    constants.EMBED_TITLE_ANNUAL_STATS
-                )
-            logger.info("Annual stats task finished.")
+            try:
+                for guild in self.bot.guilds:
+                    await self._send_stats_to_channel(
+                        guild,
+                        year_str,
+                        self.bot_commands_cog._create_annual_stats_embed,
+                        constants.EMBED_TITLE_ANNUAL_STATS
+                    )
+                logger.info("Annual stats task finished.")
+            except Exception as e:
+                logger.error(f"An unexpected error occurred in annual stats task: {e}", exc_info=True)
         else:
             logger.debug("Annual stats task skipped: not December 31st.")
