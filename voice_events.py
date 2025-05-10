@@ -351,18 +351,31 @@ class VoiceEvents(commands.Cog):
         # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
         ended_sessions_data = await self.voice_state_manager.notify_member_left(member, channel_before)
         logger.debug(f"VoiceStateManager.notify_member_left processing complete. Member: {member.id}, Channel: {channel_before.id}. Ended sessions count: {len(ended_sessions_data)}")
-        # VoiceStateManager から統計更新が必要なデータが返された場合、各メンバーごとに処理
+        # VoiceStateManager から統計更新が必要なデータが返された場合、処理関数に委譲
+        if ended_sessions_data:
+            await self._process_session_end_data(member.guild, ended_sessions_data)
+
+    async def _process_session_end_data(self, guild: discord.Guild, ended_sessions_data: list):
+        """
+        VoiceStateManagerから返された終了した個別のメンバーセッションデータを処理し、
+        統計更新とマイルストーン通知を行います。
+        """
+        logger.info(f"Starting processing of ended session data for guild {guild.id}. Data count: {len(ended_sessions_data)}")
         for member_id, duration, join_time in ended_sessions_data:
-            logger.debug(f"Starting stats update process. Member: {member_id}, Duration: {duration}, Join time: {join_time}")
+            logger.debug(f"Processing session end data for member {member_id}. Duration: {duration}, Join time: {join_time}")
             before_total = await get_total_call_time(member_id)
             month_key = join_time.strftime("%Y-%m")
             await update_member_monthly_stats(month_key, member_id, duration)
             after_total = await get_total_call_time(member_id)
             logger.debug(f"Updated monthly stats for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
-            m_obj = member.guild.get_member(member_id) if member.guild else None
+            m_obj = guild.get_member(member_id)
             if m_obj:
-                notification_channel_id = config.get_notification_channel_id(member.guild.id) # config から取得
-                await self._check_and_notify_milestone(m_obj, member.guild, before_total, after_total, notification_channel_id)
+                notification_channel_id = config.get_notification_channel_id(guild.id) # config から取得
+                await self._check_and_notify_milestone(m_obj, guild, before_total, after_total, notification_channel_id)
+            else:
+                logger.warning(f"Member {member_id} not found in guild {guild.id}. Cannot check/notify milestone.")
+        logger.info(f"Finished processing of ended session data for guild {guild.id}.")
+
 
     # チャンネル間を移動した場合の処理
     async def _handle_move(self, member, channel_before, channel_after):
@@ -403,26 +416,19 @@ class VoiceEvents(commands.Cog):
         logger.debug(f"VoiceStateManager.notify_member_moved processing complete. Member: {member.id}, Source: {channel_before.id}, Destination: {channel_after.id}. Ended sessions count: {len(ended_sessions_from_before)}, Joined session data: {joined_session_data is not None}")
 
         # 移動元での退出による統計更新とマイルストーン通知
-        for member_id_leave, duration_leave, join_time_leave in ended_sessions_from_before:
-            logger.debug(f"Starting stats update process due to leaving source channel. Member: {member_id_leave}, Duration: {duration_leave}, Join time: {join_time_leave}")
-            before_total_leave = await get_total_call_time(member_id_leave)
-            month_key_leave = join_time_leave.strftime("%Y-%m")
-            await update_member_monthly_stats(month_key_leave, member_id_leave, duration_leave)
-            after_total_leave = await get_total_call_time(member_id_leave)
-            logger.debug(f"Updated monthly stats for member {member_id_leave}. Before Total: {before_total_leave}, After Total: {after_total_leave}")
-            m_obj_leave = member.guild.get_member(member_id_leave) if member.guild else None
-            if m_obj_leave:
-                 notification_channel_id = config.get_notification_channel_id(member.guild.id) # config から取得
-                 await self._check_and_notify_milestone(m_obj_leave, member.guild, before_total_leave, after_total_leave, notification_channel_id)
+        if ended_sessions_from_before:
+            await self._process_session_end_data(member.guild, ended_sessions_from_before)
 
         # 移動先での入室による統計更新とマイルストーン通知 (移動してきたメンバー自身の場合のみ)
+        # 移動直後は通話時間0として記録（新しいセッションの開始）
         if joined_session_data is not None:
              member_id_join, duration_join, join_time_join = joined_session_data
              logger.debug(f"Starting stats update process due to joining destination channel. Member: {member_id_join}, Duration: {duration_join}, Join time: {join_time_join}")
+             # 移動直後は通話時間0として記録（新しいセッションの開始）
+             # _process_session_end_data と同様のロジックを適用しつつ、duration を 0 とする
              before_total_join = await get_total_call_time(member_id_join)
              month_key_join = join_time_join.strftime("%Y-%m")
-             # 移動直後は通話時間0として記録（新しいセッションの開始）
-             await update_member_monthly_stats(month_key_join, member_id_join, 0)
+             await update_member_monthly_stats(month_key_join, member_id_join, 0) # duration は 0
              after_total_join = await get_total_call_time(member_id_join)
              logger.debug(f"Updated monthly stats for member {member_id_join}. Before Total: {before_total_join}, After Total: {after_total_join}")
              m_obj_join = member.guild.get_member(member_id_join) if member.guild else None
