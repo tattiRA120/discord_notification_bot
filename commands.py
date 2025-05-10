@@ -3,17 +3,18 @@ from discord import app_commands
 from discord.ext import commands # Cog を使用するためにインポート
 import datetime
 from zoneinfo import ZoneInfo
-import logging # logging モジュールをインポート
+import logging
 
 from database import (
     get_db_connection, get_total_call_time, get_guild_settings, update_guild_settings,
-    get_monthly_voice_sessions, get_monthly_member_stats, get_annual_voice_sessions, get_annual_member_total_stats
+    get_monthly_voice_sessions, get_monthly_member_stats, get_annual_voice_sessions, get_annual_member_total_stats,
+    get_participants_by_session_ids
 )
 import config
 import voice_state_manager
 import formatters
-from voice_events import SleepCheckManager # SleepCheckManager をインポート
-import constants # constants モジュールをインポート
+from voice_events import SleepCheckManager
+import constants
 
 # ロガーを取得
 logger = logging.getLogger(__name__)
@@ -32,29 +33,35 @@ class BotCommands(commands.Cog):
     async def _get_monthly_statistics(self, guild, month: str):
         logger.info(f"Fetching monthly statistics for guild {guild.id}, month {month}")
 
-        # database.py から指定された月の全セッションと参加者を取得
-        sessions = await get_monthly_voice_sessions(month)
-        logger.debug(f"Found {len(sessions)} sessions for month {month}")
+        # database.py から指定された月の全セッションを取得
+        sessions_data = await get_monthly_voice_sessions(month)
+        logger.debug(f"Found {len(sessions_data)} sessions for month {month}")
 
         # database.py から指定された月のメンバー別累計通話時間を取得
         member_stats = await get_monthly_member_stats(month)
         logger.debug(f"Found stats for {len(member_stats)} members for month {month}")
 
-        # 月間平均通話時間の計算
-        if sessions:
-            monthly_avg = sum(sess["duration"] for sess in sessions) / len(sessions)
-            logger.debug(f"Calculated monthly average: {monthly_avg}")
-        else:
+        # セッションデータがない場合は平均通話時間などを0に設定
+        if not sessions_data:
             monthly_avg = 0
+            longest_info = "なし"
             logger.debug("No sessions found, monthly average is 0.")
+        else:
+            # 月間平均通話時間の計算
+            monthly_avg = sum(sess["duration"] for sess in sessions_data) / len(sessions_data)
+            logger.debug(f"Calculated monthly average: {monthly_avg}")
 
-        # 最長通話の情報取得と整形
-        if sessions:
-            longest_session = max(sessions, key=lambda s: s["duration"])
+            # 最長通話の情報取得
+            longest_session = max(sessions_data, key=lambda s: s["duration"])
             longest_duration = longest_session["duration"]
             # UTCのISO形式からJSTに変換して日付をフォーマット
             longest_date = formatters.convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
-            longest_participants = longest_session.get("participants", [])
+
+            # 最長セッションの参加者を取得
+            longest_session_id = longest_session["id"] # セッションIDを取得
+            participants_map = await get_participants_by_session_ids([longest_session_id])
+            longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
+
             longest_participants_names = []
             # 参加者IDからメンバー名を取得
             for mid in longest_participants:
@@ -65,9 +72,7 @@ class BotCommands(commands.Cog):
                     longest_participants_names.append(str(mid)) # メンバーが見つからない場合はIDを表示
             longest_info = f"{formatters.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
             logger.debug(f"Longest session: {longest_info}")
-        else:
-            longest_info = "なし"
-            logger.debug("No sessions found, no longest session.")
+
 
         # メンバー別通話時間ランキングの作成
         sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
@@ -117,9 +122,9 @@ class BotCommands(commands.Cog):
     async def _create_annual_stats_embed(self, guild, year: str):
         logger.info(f"Creating annual stats embed for guild {guild.id}, year {year}")
 
-        # database.py から指定された年度の全セッションと参加者を取得
-        sessions_all = await get_annual_voice_sessions(year)
-        logger.debug(f"Found {len(sessions_all)} sessions for year {year}")
+        # database.py から指定された年度の全セッションを取得
+        sessions_data = await get_annual_voice_sessions(year)
+        logger.debug(f"Found {len(sessions_data)} sessions for year {year}")
 
         # database.py から指定された年度のメンバー別累計通話時間を取得
         members_total = await get_annual_member_total_stats(year)
@@ -127,22 +132,27 @@ class BotCommands(commands.Cog):
 
         year_display = f"{year}年"
         # セッションデータがない場合はNoneを返す
-        if not sessions_all:
+        if not sessions_data:
             logger.info(f"No sessions found for year {year}")
             return None, year_display
 
         # 年間合計通話時間、セッション数、平均通話時間の計算
-        total_duration = sum(sess["duration"] for sess in sessions_all)
-        total_sessions = len(sessions_all)
+        total_duration = sum(sess["duration"] for sess in sessions_data)
+        total_sessions = len(sessions_data)
         avg_duration = total_duration / total_sessions if total_sessions else 0
         logger.debug(f"Calculated annual total duration: {total_duration}, total sessions: {total_sessions}, average duration: {avg_duration}")
 
-        # 最長セッションの情報取得と整形
-        longest_session = max(sessions_all, key=lambda s: s["duration"])
+        # 最長セッションの情報取得
+        longest_session = max(sessions_data, key=lambda s: s["duration"])
         longest_duration = longest_session["duration"]
         # UTCのISO形式からJSTに変換して日付をフォーマット
         longest_date = formatters.convert_utc_to_jst(datetime.datetime.fromisoformat(longest_session["start_time"])).strftime('%Y/%m/%d')
-        longest_participants = longest_session["participants"]
+
+        # 最長セッションの参加者を取得
+        longest_session_id = longest_session["id"] # セッションIDを取得
+        participants_map = await get_participants_by_session_ids([longest_session_id])
+        longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
+
         longest_participants_names = []
         # 参加者IDからメンバー名を取得
         for mid in longest_participants:

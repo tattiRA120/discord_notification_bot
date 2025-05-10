@@ -229,6 +229,41 @@ SQL_UPSERT_MEMBER_MONTHLY_STATS = f"""
 """
 
 
+async def get_participants_by_session_ids(session_ids: list):
+    """
+    指定されたセッションIDリストに含まれるセッションの参加者を取得し、セッションIDごとにグループ化して返します。
+    """
+    if not session_ids:
+        return {}
+
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+
+            # 全セッションの参加者を一度に取得
+            placeholders = ','.join('?' for _ in session_ids)
+            await cursor.execute(f"""
+                SELECT session_id, member_id FROM session_participants
+                WHERE session_id IN ({placeholders})
+            """, session_ids)
+            all_participants_data = await cursor.fetchall()
+
+            # セッションIDごとに参加者をグループ化
+            session_participants_map = {}
+            for participant_row in all_participants_data:
+                session_id = participant_row['session_id']
+                member_id = participant_row['member_id']
+                if session_id not in session_participants_map:
+                    session_participants_map[session_id] = []
+                session_participants_map[session_id].append(member_id)
+
+            logger.debug(f"Fetched participants for {len(session_ids)} sessions.")
+            return session_participants_map
+    except Exception as e:
+        logger.error(f"An error occurred while fetching participants by session IDs: {e}")
+        return {} # エラー発生時は空の辞書を返す
+
+
 async def get_total_call_time(member_id):
     """
     指定されたメンバーの総通話時間をデータベースから取得します。
@@ -287,6 +322,7 @@ async def get_monthly_voice_sessions(month_key: str):
                 # セッションデータにメンバー情報を結合
                 for session_row in sessions_data:
                     sessions.append({
+                        "id": session_row['id'],
                         "start_time": session_row['start_time'],
                         "duration": session_row['duration'],
                         "participants": session_participants_map.get(session_row['id'], [])
@@ -358,6 +394,7 @@ async def get_annual_voice_sessions(year: str):
                 # セッションデータにメンバー情報を結合
                 for session_row in sessions_data:
                     sessions_all.append({
+                        "id": session_row['id'],
                         "start_time": session_row['start_time'],
                         "duration": session_row['duration'],
                         "participants": session_participants_map.get(session_row['id'], [])
