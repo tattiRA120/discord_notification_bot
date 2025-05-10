@@ -6,7 +6,7 @@ from discord.ext import commands # Cog を使用するためにインポート
 
 from database import get_total_call_time, get_guild_settings, update_member_monthly_stats, record_voice_session_to_db
 import config
-import voice_state_manager
+from voice_state_manager import VoiceStateManager, CallNotificationManager, StatisticalSessionManager, BotStatusUpdater
 import formatters
 import constants
 
@@ -209,10 +209,11 @@ class SleepCheckManager:
 # --- イベントハンドラ ---
 
 class VoiceEvents(commands.Cog):
-    def __init__(self, bot, sleep_check_manager: SleepCheckManager, voice_state_manager: voice_state_manager.VoiceStateManager):
+    # コンストラクタで分解された各マネージャーのインスタンスを受け取る
+    def __init__(self, bot, sleep_check_manager: SleepCheckManager, voice_state_manager: VoiceStateManager):
         self.bot = bot
         self.sleep_check_manager = sleep_check_manager
-        self.voice_state_manager = voice_state_manager
+        self.voice_state_manager = voice_state_manager # VoiceStateManager は調整役として残す
         logger.info("VoiceEvents Cog initialized.")
 
     # --- 10時間達成通知用ヘルパー関数 ---
@@ -278,9 +279,13 @@ class VoiceEvents(commands.Cog):
                 logger.debug(f"Multiple members joined channel {channel_after.id} ({guild_id}). Removing lonely state.")
                 self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
 
-        # VoiceStateManager に処理を委譲
-        await self.voice_state_manager.notify_member_joined(member, channel_after)
-        logger.debug(f"VoiceStateManager.notify_member_joined processing complete. Member: {member.id}, Channel: {channel_after.id}")
+        # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
+        ended_sessions_data = await self.voice_state_manager.notify_member_joined(member, channel_after)
+        logger.debug(f"VoiceStateManager.notify_member_joined processing complete. Member: {member.id}, Channel: {channel_after.id}. Ended sessions count: {len(ended_sessions_data)}")
+
+        # VoiceStateManager から統計更新が必要なデータが返された場合、処理関数に委譲
+        if ended_sessions_data:
+            await self._process_session_end_data(member.guild, ended_sessions_data)
 
         # ボットによってミュートされたメンバーが再入室した場合、ミュートを解除
         if member.id in self.sleep_check_manager.bot_muted_members:

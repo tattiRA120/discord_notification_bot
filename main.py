@@ -10,7 +10,7 @@ import constants # constants モジュールをインポート
 from commands import BotCommands
 from tasks import BotTasks
 from voice_events import VoiceEvents, SleepCheckManager
-from voice_state_manager import VoiceStateManager
+from voice_state_manager import VoiceStateManager, CallNotificationManager, StatisticalSessionManager, BotStatusUpdater
 import config
 from database import init_db, close_db
 
@@ -40,14 +40,19 @@ async def on_ready():
     await init_db()
     logging.info('Database initialized.')
 
-    # SleepCheckManager と VoiceStateManager のインスタンスを作成
+    # SleepCheckManager のインスタンスを作成
     sleep_check_manager = SleepCheckManager(bot)
-    voice_state_manager = VoiceStateManager(bot)
+    logging.info("SleepCheckManager instance created.")
 
-    # Cog の追加
-    # SleepCheckManager と VoiceStateManager のインスタンスを作成
-    sleep_check_manager = SleepCheckManager(bot)
-    voice_state_manager = VoiceStateManager(bot)
+    # VoiceStateManager を構成する各マネージャーのインスタンスを作成
+    call_notification_manager = CallNotificationManager(bot)
+    statistical_session_manager = StatisticalSessionManager()
+    bot_status_updater = BotStatusUpdater(bot, statistical_session_manager)
+    logging.info("Decomposed VoiceStateManager components instantiated.")
+
+    # VoiceStateManager のインスタンスを作成し、分解したマネージャーを渡す
+    voice_state_manager = VoiceStateManager(bot, call_notification_manager, statistical_session_manager, bot_status_updater)
+    logging.info("VoiceStateManager instance created with decomposed components.")
 
     # Cog の追加
     # VoiceEvents Cog は sleep_check_manager と voice_state_manager を必要とする
@@ -56,6 +61,7 @@ async def on_ready():
     logging.info("VoiceEvents Cog added.")
 
     # BotCommands のインスタンスを作成 (Cogとしては追加しない)
+    # BotCommands は voice_state_manager を必要とする
     bot_commands_instance = BotCommands(bot, sleep_check_manager, voice_state_manager)
     logging.info("BotCommands instance created.")
 
@@ -67,6 +73,7 @@ async def on_ready():
     # 定期実行タスクの開始
     tasks_cog.send_monthly_stats_task.start()
     tasks_cog.send_annual_stats_task.start()
+    # BotStatusUpdater のタスクは BotStatusUpdater クラス内で管理されるため、ここでは開始しない
     logging.info("Scheduled tasks started.")
 
     # コマンドの手動登録と同期

@@ -331,7 +331,14 @@ class BotCommands(commands.Cog):
         else:
             # 各通話チャンネルと継続時間をEmbedのフィールドに追加
             for call in active_calls:
-                embed.add_field(name=f"{call['channel_name']}", value=call['duration'], inline=False)
+                channel_id = call['channel_id']
+                channel = self.bot.get_channel(channel_id)
+                if channel:
+                    embed.add_field(name=f"{channel.name}", value=call['duration'], inline=False)
+                else:
+                    logger.warning(f"Channel with ID {channel_id} not found in bot cache.")
+                    embed.add_field(name=f"不明なチャンネル ({channel_id})", value=call['duration'], inline=False)
+
             await interaction.response.send_message(embed=embed, ephemeral=True)
             logger.info("/call_duration command executed successfully.")
 
