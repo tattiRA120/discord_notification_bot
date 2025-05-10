@@ -62,10 +62,11 @@ class BotCommands(commands.Cog):
             participants_map = await get_participants_by_session_ids([longest_session_id])
             longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
 
+            # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成
+            member_lookup = {member.id: member for member in guild.members}
             longest_participants_names = []
-            # 参加者IDからメンバー名を取得
             for mid in longest_participants:
-                m_obj = guild.get_member(mid)
+                m_obj = member_lookup.get(mid)
                 if m_obj:
                     longest_participants_names.append(m_obj.display_name)
                 else:
@@ -77,8 +78,10 @@ class BotCommands(commands.Cog):
         # メンバー別通話時間ランキングの作成
         sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
         ranking_lines = []
+        # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成 (既に取得済みであれば再利用)
+        member_lookup = {member.id: member for member in guild.members}
         for i, (member_id, duration) in enumerate(sorted_members, start=1):
-            m_obj = guild.get_member(member_id)
+            m_obj = member_lookup.get(member_id)
             name = m_obj.display_name if m_obj else str(member_id)
             ranking_lines.append(f"{i}.  {formatters.format_duration(duration)}  {name}")
         ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
@@ -153,10 +156,11 @@ class BotCommands(commands.Cog):
         participants_map = await get_participants_by_session_ids([longest_session_id])
         longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
 
+        # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成
+        member_lookup = {member.id: member for member in guild.members}
         longest_participants_names = []
-        # 参加者IDからメンバー名を取得
         for mid in longest_participants:
-            m_obj = guild.get_member(mid)
+            m_obj = member_lookup.get(mid)
             if m_obj:
                 longest_participants_names.append(m_obj.display_name)
             else:
@@ -167,8 +171,10 @@ class BotCommands(commands.Cog):
         # メンバー別ランキング（累計時間）の作成
         sorted_members = sorted(members_total.items(), key=lambda x: x[1], reverse=True)
         ranking_lines = []
+        # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成 (既に取得済みであれば再利用)
+        member_lookup = {member.id: member for member in guild.members}
         for i, (member_id, duration) in enumerate(sorted_members, start=1):
-            m_obj = guild.get_member(member_id)
+            m_obj = member_lookup.get(member_id)
             name = m_obj.display_name if m_obj else str(member_id)
             ranking_lines.append(f"{i}.  {formatters.format_duration(duration)}  {name}")
         ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
@@ -288,9 +294,11 @@ class BotCommands(commands.Cog):
             # ランキング表示用のEmbedを作成
             embed = discord.Embed(title=constants.EMBED_TITLE_TOTAL_CALL_RANKING, color=constants.EMBED_COLOR_MILESTONE)
             ranking_text = ""
+            # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成
+            member_lookup = {member.id: member for member in guild.members}
             # constants.RANKING_LIMIT で定義された上位メンバーのみを表示
             for i, (member_id, total_seconds) in enumerate(sorted_members[:constants.RANKING_LIMIT], start=1):
-                member = guild.get_member(member_id)
+                member = member_lookup.get(member_id)
                 if member:
                     formatted_time = formatters.format_duration(total_seconds)
                     ranking_text += f"{i}. {formatted_time} {member.display_name}\n"
