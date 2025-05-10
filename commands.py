@@ -27,6 +27,22 @@ class BotCommands(commands.Cog):
         self.voice_state_manager = voice_state_manager
         logger.info("BotCommands Cog initialized.")
 
+    # --- メンバーIDリストから表示名リストを取得するヘルパー関数 ---
+    def _get_member_display_names(self, guild, member_ids):
+        """
+        メンバーIDのリストを受け取り、対応するメンバーの表示名のリストを返します。
+        メンバーが見つからない場合はIDを文字列として返します。
+        """
+        member_lookup = {member.id: member for member in guild.members}
+        display_names = []
+        for mid in member_ids:
+            m_obj = member_lookup.get(mid)
+            if m_obj:
+                display_names.append(m_obj.display_name)
+            else:
+                display_names.append(str(mid)) # メンバーが見つからない場合はIDを表示
+        return display_names
+
     # --- 月間統計作成用ヘルパー関数 ---
     # 指定された月の通話統計情報をデータベースから取得し、整形して返します。
     # データベース操作、データ集計、最長通話やランキングの算出を含みます。
@@ -62,15 +78,7 @@ class BotCommands(commands.Cog):
             participants_map = await get_participants_by_session_ids([longest_session_id])
             longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
 
-            # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成
-            member_lookup = {member.id: member for member in guild.members}
-            longest_participants_names = []
-            for mid in longest_participants:
-                m_obj = member_lookup.get(mid)
-                if m_obj:
-                    longest_participants_names.append(m_obj.display_name)
-                else:
-                    longest_participants_names.append(str(mid)) # メンバーが見つからない場合はIDを表示
+            longest_participants_names = self._get_member_display_names(guild, longest_participants)
             longest_info = f"{formatters.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
             logger.debug(f"Longest session: {longest_info}")
 
@@ -78,11 +86,11 @@ class BotCommands(commands.Cog):
         # メンバー別通話時間ランキングの作成
         sorted_members = sorted(member_stats.items(), key=lambda x: x[1], reverse=True)
         ranking_lines = []
-        # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成 (既に取得済みであれば再利用)
-        member_lookup = {member.id: member for member in guild.members}
+        member_ids_in_ranking = [member_id for member_id, duration in sorted_members]
+        ranking_display_names = self._get_member_display_names(guild, member_ids_in_ranking)
+
         for i, (member_id, duration) in enumerate(sorted_members, start=1):
-            m_obj = member_lookup.get(member_id)
-            name = m_obj.display_name if m_obj else str(member_id)
+            name = ranking_display_names[i-1] # ヘルパー関数で取得した表示名を使用
             ranking_lines.append(f"{i}.  {formatters.format_duration(duration)}  {name}")
         ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
         logger.debug(f"Ranking text generated:\n{ranking_text}")
@@ -156,26 +164,18 @@ class BotCommands(commands.Cog):
         participants_map = await get_participants_by_session_ids([longest_session_id])
         longest_participants = participants_map.get(longest_session_id, []) # 参加者リストを取得
 
-        # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成
-        member_lookup = {member.id: member for member in guild.members}
-        longest_participants_names = []
-        for mid in longest_participants:
-            m_obj = member_lookup.get(mid)
-            if m_obj:
-                longest_participants_names.append(m_obj.display_name)
-            else:
-                longest_participants_names.append(str(mid)) # メンバーが見つからない場合はIDを表示
+        longest_participants_names = self._get_member_display_names(guild, longest_participants)
         longest_info = f"{formatters.format_duration(longest_duration)}（{longest_date}）\n参加: {', '.join(longest_participants_names)}"
         logger.debug(f"Longest annual session: {longest_info}")
 
         # メンバー別ランキング（累計時間）の作成
         sorted_members = sorted(members_total.items(), key=lambda x: x[1], reverse=True)
         ranking_lines = []
-        # メンバーIDからメンバー名を取得するために、ギルドの全メンバーを取得してルックアップを作成 (既に取得済みであれば再利用)
-        member_lookup = {member.id: member for member in guild.members}
+        member_ids_in_ranking = [member_id for member_id, duration in sorted_members]
+        ranking_display_names = self._get_member_display_names(guild, member_ids_in_ranking)
+
         for i, (member_id, duration) in enumerate(sorted_members, start=1):
-            m_obj = member_lookup.get(member_id)
-            name = m_obj.display_name if m_obj else str(member_id)
+            name = ranking_display_names[i-1] # ヘルパー関数で取得した表示名を使用
             ranking_lines.append(f"{i}.  {formatters.format_duration(duration)}  {name}")
         ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
         logger.debug(f"Annual ranking text generated:\n{ranking_text}")
