@@ -1,14 +1,14 @@
 import discord
 import datetime
 import asyncio
-import logging # logging モジュールをインポート
+import logging
 from discord.ext import commands # Cog を使用するためにインポート
 
 from database import get_total_call_time, get_guild_settings, update_member_monthly_stats, record_voice_session_to_db
-import config # config モジュールをインポート
-import voice_state_manager # voice_state_manager モジュールをインポート
-import formatters # formatters モジュールをインポート
-import constants # constants モジュールをインポート
+import config
+import voice_state_manager
+import formatters
+import constants
 
 # ロガーを取得
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class SleepCheckManager:
             logger.info(f"Removed lonely state for channel {channel_id} ({guild_id}).")
 
     # --- 寝落ち確認とミュート処理 ---
-    async def check_lonely_channel(self, guild_id: int, channel_id: int, member_id: int):
+    async def check_lonely_channel(self, guild_id: int, channel_id: int, member_id: int, notification_channel_id: int | None):
         logger.info(f"Starting lonely state check for channel {channel_id} ({guild_id}). Member: {member_id}")
         timeout_seconds = await self._get_lonely_timeout_seconds(guild_id)
         logger.debug(f"Configured timeout: {timeout_seconds} seconds")
@@ -82,7 +82,6 @@ class SleepCheckManager:
         # チャンネルに一人だけ残っている、または複数人だが最初に一人になったメンバーがまだいる場合
         logger.info(f"Channel {channel_id} ({guild_id}) remains in a lonely state. Sending sleep check message.")
         # 寝落ち確認メッセージを送信
-        notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
         if notification_channel_id:
             notification_channel = self.bot.get_channel(notification_channel_id)
             if notification_channel:
@@ -99,7 +98,7 @@ class SleepCheckManager:
                         logger.info(f"Sent sleep check message to channel {notification_channel_id}. Message ID: {message.id}")
 
                         # リアクション監視タスクを開始
-                        reaction_task = asyncio.create_task(self.wait_for_reaction(message.id, member_id, guild_id, channel_id))
+                        reaction_task = asyncio.create_task(self.wait_for_reaction(message.id, member_id, guild_id, channel_id, notification_channel_id))
                         self.sleep_check_messages[message.id] = {"member_id": member_id, "task": reaction_task}
                         logger.debug(f"Started reaction monitoring task. Message ID: {message.id}")
 
@@ -127,7 +126,7 @@ class SleepCheckManager:
                 self.lonely_voice_channels.pop(key)
 
 
-    async def wait_for_reaction(self, message_id: int, member_id: int, guild_id: int, channel_id: int):
+    async def wait_for_reaction(self, message_id: int, member_id: int, guild_id: int, channel_id: int, notification_channel_id: int | None):
         logger.info(f"Starting reaction monitoring for message {message_id}. Member: {member_id}")
         settings = await get_guild_settings(guild_id)
         wait_seconds = settings["reaction_wait_minutes"] * constants.SECONDS_PER_MINUTE
@@ -141,7 +140,6 @@ class SleepCheckManager:
             await self.bot.wait_for('reaction_add', timeout=wait_seconds, check=check)
             logger.info(f"Member {member_id} reacted to message {message_id}. Cancelling mute process.")
             guild = self.bot.get_guild(guild_id)
-            notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
             if guild and notification_channel_id:
                 notification_channel = self.bot.get_channel(notification_channel_id)
                 if notification_channel:
@@ -170,7 +168,6 @@ class SleepCheckManager:
                         # ボットがミュートしたメンバーを記録
                         self.add_bot_muted_member(member.id)
 
-                        notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
                         if notification_channel_id:
                             notification_channel = self.bot.get_channel(notification_channel_id)
                             if notification_channel:
@@ -219,11 +216,9 @@ class VoiceEvents(commands.Cog):
         logger.info("VoiceEvents Cog initialized.")
 
     # --- 10時間達成通知用ヘルパー関数 ---
-    async def _check_and_notify_milestone(self, member: discord.Member, guild: discord.Guild, before_total: float, after_total: float):
+    async def _check_and_notify_milestone(self, member: discord.Member, guild: discord.Guild, before_total: float, after_total: float, notification_channel_id: int | None):
         logger.info(f"Checking for milestone notification. Member: {member.id}, Guild: {guild.id}, Before: {before_total}, After: {after_total}")
-        # config モジュールから get_notification_channel_id をインポートする必要があります
         guild_id = str(guild.id)
-        notification_channel_id = config.get_notification_channel_id(guild.id) # config から取得
 
         if notification_channel_id is None:
             logger.debug(f"Notification channel not set for guild {guild_id}. Skipping milestone notification.")
@@ -274,7 +269,8 @@ class VoiceEvents(commands.Cog):
             lonely_member = channel_after.members[0]
             if key_after not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
                 logger.debug(f"Channel {channel_after.id} ({guild_id}) has one or fewer members. Starting sleep check. Member: {lonely_member.id}")
-                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id))
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id, notification_channel_id))
                 self.sleep_check_manager.add_lonely_channel(guild_id, channel_after.id, lonely_member.id, task)
         # 入室したチャンネルが複数人になった場合、一人以下の状態を解除
         elif len(channel_after.members) > 1:
@@ -348,7 +344,8 @@ class VoiceEvents(commands.Cog):
             lonely_member = channel_before.members[0]
             if key_before not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
                 logger.debug(f"Only one member left in channel {channel_before.id} ({guild_id}). Starting sleep check. Member: {lonely_member.id}")
-                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_before.id, lonely_member.id))
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_before.id, lonely_member.id, notification_channel_id))
                 self.sleep_check_manager.add_lonely_channel(guild_id, channel_before.id, lonely_member.id, task)
 
         # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
@@ -364,7 +361,8 @@ class VoiceEvents(commands.Cog):
             logger.debug(f"Updated monthly stats for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
             m_obj = member.guild.get_member(member_id) if member.guild else None
             if m_obj:
-                await self._check_and_notify_milestone(m_obj, member.guild, before_total, after_total)
+                notification_channel_id = config.get_notification_channel_id(member.guild.id) # config から取得
+                await self._check_and_notify_milestone(m_obj, member.guild, before_total, after_total, notification_channel_id)
 
     # チャンネル間を移動した場合の処理
     async def _handle_move(self, member, channel_before, channel_after):
@@ -391,7 +389,8 @@ class VoiceEvents(commands.Cog):
             lonely_member = channel_after.members[0]
             if key_after not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
                 logger.debug(f"Destination channel {channel_after.id} ({guild_id}) has one or fewer members. Starting sleep check. Member: {lonely_member.id}")
-                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id))
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id, notification_channel_id))
                 self.sleep_check_manager.add_lonely_channel(guild_id, channel_after.id, lonely_member.id, task)
         # 移動先チャンネルが複数人になった場合、一人以下の状態を解除
         elif len(channel_after.members) > 1:
@@ -413,7 +412,8 @@ class VoiceEvents(commands.Cog):
             logger.debug(f"Updated monthly stats for member {member_id_leave}. Before Total: {before_total_leave}, After Total: {after_total_leave}")
             m_obj_leave = member.guild.get_member(member_id_leave) if member.guild else None
             if m_obj_leave:
-                 await self._check_and_notify_milestone(m_obj_leave, member.guild, before_total_leave, after_total_leave)
+                 notification_channel_id = config.get_notification_channel_id(member.guild.id) # config から取得
+                 await self._check_and_notify_milestone(m_obj_leave, member.guild, before_total_leave, after_total_leave, notification_channel_id)
 
         # 移動先での入室による統計更新とマイルストーン通知 (移動してきたメンバー自身の場合のみ)
         if joined_session_data is not None:
@@ -427,7 +427,8 @@ class VoiceEvents(commands.Cog):
              logger.debug(f"Updated monthly stats for member {member_id_join}. Before Total: {before_total_join}, After Total: {after_total_join}")
              m_obj_join = member.guild.get_member(member_id_join) if member.guild else None
              if m_obj_join:
-                 await self._check_and_notify_milestone(m_obj_join, member.guild, before_total_join, after_total_join)
+                 notification_channel_id = config.get_notification_channel_id(member.guild.id) # config から取得
+                 await self._check_and_notify_milestone(m_obj_join, member.guild, before_total_join, after_total_join, notification_channel_id)
 
 
         # ボットによってミュートされたメンバーがチャンネル移動した場合、ミュートを解除
