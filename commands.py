@@ -5,7 +5,10 @@ import datetime
 from zoneinfo import ZoneInfo
 import logging # logging モジュールをインポート
 
-from database import get_db_connection, get_total_call_time, get_guild_settings, update_guild_settings
+from database import (
+    get_db_connection, get_total_call_time, get_guild_settings, update_guild_settings,
+    get_monthly_voice_sessions, get_monthly_member_stats, get_annual_voice_sessions, get_annual_member_total_stats
+)
 import config
 import voice_state_manager
 import formatters
@@ -28,59 +31,14 @@ class BotCommands(commands.Cog):
     # データベース操作、データ集計、最長通話やランキングの算出を含みます。
     async def _get_monthly_statistics(self, guild, month: str):
         logger.info(f"Fetching monthly statistics for guild {guild.id}, month {month}")
-        # データベース接続を取得
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
 
-        # 指定された月の全セッションを取得
-        await cursor.execute("""
-            SELECT start_time, duration, id FROM sessions
-            WHERE month_key = ?
-        """, (month,))
-        sessions_data = await cursor.fetchall()
-        logger.debug(f"Found {len(sessions_data)} sessions for month {month}")
+        # database.py から指定された月の全セッションと参加者を取得
+        sessions = await get_monthly_voice_sessions(month)
+        logger.debug(f"Found {len(sessions)} sessions for month {month}")
 
-        sessions = []
-        session_ids = [session_row['id'] for session_row in sessions_data]
-
-        # 取得したセッションに参加したメンバーをまとめて取得し、セッションIDごとにグループ化
-        if session_ids:
-            placeholders = ','.join('?' for _ in session_ids)
-            await cursor.execute(f"""
-                SELECT session_id, member_id FROM session_participants
-                WHERE session_id IN ({placeholders})
-            """, session_ids)
-            all_participants_data = await cursor.fetchall()
-
-            session_participants_map = {}
-            for participant_row in all_participants_data:
-                session_id = participant_row['session_id']
-                member_id = participant_row['member_id']
-                if session_id not in session_participants_map:
-                    session_participants_map[session_id] = []
-                session_participants_map[session_id].append(member_id)
-
-            # セッションデータにメンバー情報を結合
-            for session_row in sessions_data:
-                sessions.append({
-                    "start_time": session_row['start_time'],
-                    "duration": session_row['duration'],
-                    "participants": session_participants_map.get(session_row['id'], [])
-                })
-
-        # 指定された月のメンバー別累計通話時間を取得
-        await cursor.execute("""
-            SELECT member_id, total_duration FROM member_monthly_stats
-            WHERE month_key = ?
-        """, (month,))
-        member_stats_data = await cursor.fetchall()
-        # メンバーIDをキーとした辞書に変換
-        member_stats = {m['member_id']: m['total_duration'] for m in member_stats_data}
+        # database.py から指定された月のメンバー別累計通話時間を取得
+        member_stats = await get_monthly_member_stats(month)
         logger.debug(f"Found stats for {len(member_stats)} members for month {month}")
-
-        # データベース接続を閉じる
-        await conn.close()
-        logger.debug("Database connection closed.")
 
         # 月間平均通話時間の計算
         if sessions:
@@ -158,62 +116,14 @@ class BotCommands(commands.Cog):
     # データベース操作、データ集計、最長通話やランキングの算出を含みます。
     async def _create_annual_stats_embed(self, guild, year: str):
         logger.info(f"Creating annual stats embed for guild {guild.id}, year {year}")
-        # データベース接続を取得
-        conn = await get_db_connection()
-        cursor = await conn.cursor()
 
-        # 対象年度の全セッションを取得
-        await cursor.execute("""
-            SELECT start_time, duration, id FROM sessions
-            WHERE strftime('%Y', start_time) = ?
-        """, (year,))
-        sessions_data = await cursor.fetchall()
-        logger.debug(f"Found {len(sessions_data)} sessions for year {year}")
+        # database.py から指定された年度の全セッションと参加者を取得
+        sessions_all = await get_annual_voice_sessions(year)
+        logger.debug(f"Found {len(sessions_all)} sessions for year {year}")
 
-        sessions_all = []
-        session_ids = [session_row['id'] for session_row in sessions_data]
-
-        if session_ids:
-            # 全セッションの参加者を一度に取得
-            placeholders = ','.join('?' for _ in session_ids)
-            await cursor.execute(f"""
-                SELECT session_id, member_id FROM session_participants
-                WHERE session_id IN ({placeholders})
-            """, session_ids)
-            all_participants_data = await cursor.fetchall()
-
-            # セッションIDごとに参加者をグループ化
-            session_participants_map = {}
-            for participant_row in all_participants_data:
-                session_id = participant_row['session_id']
-                member_id = participant_row['member_id']
-                if session_id not in session_participants_map:
-                    session_participants_map[session_id] = []
-                session_participants_map[session_id].append(member_id)
-
-            # セッションデータにメンバー情報を結合
-            for session_row in sessions_data:
-                sessions_all.append({
-                    "start_time": session_row['start_time'],
-                    "duration": session_row['duration'],
-                    "participants": session_participants_map.get(session_row['id'], [])
-                })
-
-        # 対象年度のメンバー別累計時間を全て取得
-        await cursor.execute("""
-            SELECT member_id, SUM(total_duration) as total_duration
-            FROM member_monthly_stats
-            WHERE strftime('%Y', month_key) = ?
-            GROUP BY member_id
-        """, (year,))
-        members_total_data = await cursor.fetchall()
-        # メンバーIDをキーとした辞書に変換
-        members_total = {m['member_id']: m['total_duration'] for m in members_total_data}
+        # database.py から指定された年度のメンバー別累計通話時間を取得
+        members_total = await get_annual_member_total_stats(year)
         logger.debug(f"Found stats for {len(members_total)} members for year {year}")
-
-        # データベース接続を閉じる
-        await conn.close()
-        logger.debug("Database connection closed.")
 
         year_display = f"{year}年"
         # セッションデータがない場合はNoneを返す

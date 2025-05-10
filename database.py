@@ -248,6 +248,149 @@ async def get_total_call_time(member_id):
         logger.error(f"An error occurred while fetching total call time for member {member_id}: {e}")
         return constants.DEFAULT_TOTAL_DURATION # エラー発生時はデフォルト値を返す
 
+async def get_monthly_voice_sessions(month_key: str):
+    """
+    指定された月の全セッションと参加者を取得します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+
+            # 指定された月の全セッションを取得
+            await cursor.execute("""
+                SELECT start_time, duration, id FROM sessions
+                WHERE month_key = ?
+            """, (month_key,))
+            sessions_data = await cursor.fetchall()
+            logger.debug(f"Found {len(sessions_data)} sessions for month {month_key}")
+
+            sessions = []
+            session_ids = [session_row['id'] for session_row in sessions_data]
+
+            # 取得したセッションに参加したメンバーをまとめて取得し、セッションIDごとにグループ化
+            if session_ids:
+                placeholders = ','.join('?' for _ in session_ids)
+                await cursor.execute(f"""
+                    SELECT session_id, member_id FROM session_participants
+                    WHERE session_id IN ({placeholders})
+                """, session_ids)
+                all_participants_data = await cursor.fetchall()
+
+                session_participants_map = {}
+                for participant_row in all_participants_data:
+                    session_id = participant_row['session_id']
+                    member_id = participant_row['member_id']
+                    if session_id not in session_participants_map:
+                        session_participants_map[session_id] = []
+                    session_participants_map[session_id].append(member_id)
+
+                # セッションデータにメンバー情報を結合
+                for session_row in sessions_data:
+                    sessions.append({
+                        "start_time": session_row['start_time'],
+                        "duration": session_row['duration'],
+                        "participants": session_participants_map.get(session_row['id'], [])
+                    })
+            logger.debug(f"Prepared {len(sessions)} sessions with participants for month {month_key}")
+            return sessions
+    except Exception as e:
+        logger.error(f"An error occurred while fetching monthly voice sessions for month {month_key}: {e}")
+        return [] # エラー発生時は空のリストを返す
+
+async def get_monthly_member_stats(month_key: str):
+    """
+    指定された月のメンバー別累計通話時間を取得します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            # 指定された月のメンバー別累計通話時間を取得
+            await cursor.execute("""
+                SELECT member_id, total_duration FROM member_monthly_stats
+                WHERE month_key = ?
+            """, (month_key,))
+            member_stats_data = await cursor.fetchall()
+            # メンバーIDをキーとした辞書に変換
+            member_stats = {m['member_id']: m['total_duration'] for m in member_stats_data}
+            logger.debug(f"Found stats for {len(member_stats)} members for month {month_key}")
+            return member_stats
+    except Exception as e:
+        logger.error(f"An error occurred while fetching monthly member stats for month {month_key}: {e}")
+        return {} # エラー発生時は空の辞書を返す
+
+async def get_annual_voice_sessions(year: str):
+    """
+    指定された年度の全セッションと参加者を取得します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+
+            # 対象年度の全セッションを取得
+            await cursor.execute("""
+                SELECT start_time, duration, id FROM sessions
+                WHERE strftime('%Y', start_time) = ?
+            """, (year,))
+            sessions_data = await cursor.fetchall()
+            logger.debug(f"Found {len(sessions_data)} sessions for year {year}")
+
+            sessions_all = []
+            session_ids = [session_row['id'] for session_row in sessions_data]
+
+            if session_ids:
+                # 全セッションの参加者を一度に取得
+                placeholders = ','.join('?' for _ in session_ids)
+                await cursor.execute(f"""
+                    SELECT session_id, member_id FROM session_participants
+                    WHERE session_id IN ({placeholders})
+                """, session_ids)
+                all_participants_data = await cursor.fetchall()
+
+                # セッションIDごとに参加者をグループ化
+                session_participants_map = {}
+                for participant_row in all_participants_data:
+                    session_id = participant_row['session_id']
+                    member_id = participant_row['member_id']
+                    if session_id not in session_participants_map:
+                        session_participants_map[session_id] = []
+                    session_participants_map[session_id].append(member_id)
+
+                # セッションデータにメンバー情報を結合
+                for session_row in sessions_data:
+                    sessions_all.append({
+                        "start_time": session_row['start_time'],
+                        "duration": session_row['duration'],
+                        "participants": session_participants_map.get(session_row['id'], [])
+                    })
+            logger.debug(f"Prepared {len(sessions_all)} sessions with participants for year {year}")
+            return sessions_all
+    except Exception as e:
+        logger.error(f"An error occurred while fetching annual voice sessions for year {year}: {e}")
+        return [] # エラー発生時は空のリストを返す
+
+async def get_annual_member_total_stats(year: str):
+    """
+    指定された年度のメンバー別累計通話時間を取得します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            # 対象年度のメンバー別累計時間を全て取得
+            await cursor.execute("""
+                SELECT member_id, SUM(total_duration) as total_duration
+                FROM member_monthly_stats
+                WHERE strftime('%Y', month_key) = ?
+                GROUP BY member_id
+            """, (year,))
+            members_total_data = await cursor.fetchall()
+            # メンバーIDをキーとした辞書に変換
+            members_total = {m['member_id']: m['total_duration'] for m in members_total_data}
+            logger.debug(f"Found stats for {len(members_total)} members for year {year}")
+            return members_total
+    except Exception as e:
+        logger.error(f"An error occurred while fetching annual member total stats for year {year}: {e}")
+        return {} # エラー発生時は空の辞書を返す
+
 
 async def get_guild_settings(guild_id):
     """
