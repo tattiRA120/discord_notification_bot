@@ -377,12 +377,11 @@ class VoiceEvents(commands.Cog):
         logger.info(f"Finished processing of ended session data for guild {guild.id}.")
 
 
-    # チャンネル間を移動した場合の処理
-    async def _handle_move(self, member, channel_before, channel_after):
-        logger.info(f"Member {member.id} moved from channel {channel_before.id} ({channel_before.name}) to channel {channel_after.id} ({channel_after.name}).")
+    # 移動元チャンネルからメンバーが退出した際の処理（移動用）
+    async def _process_member_leave_for_move(self, member, channel_before):
+        logger.debug(f"[_process_member_leave_for_move] Member {member.id} leaving channel {channel_before.id}.")
         guild_id = member.guild.id
         key_before = (guild_id, channel_before.id)
-        key_after = (guild_id, channel_after.id)
 
         # 移動元チャンネルに誰もいなくなった場合、一人以下の状態を解除
         if len(channel_before.members) == 0:
@@ -394,8 +393,16 @@ class VoiceEvents(commands.Cog):
             lonely_member = channel_before.members[0]
             if key_before not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
                 logger.debug(f"Only one member left in source channel {channel_before.id} ({guild_id}). Starting sleep check. Member: {lonely_member.id}")
-                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_before.id, lonely_member.id))
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_before.id, lonely_member.id, notification_channel_id))
                 self.sleep_check_manager.add_lonely_channel(guild_id, channel_before.id, lonely_member.id, task)
+        logger.debug(f"Finished processing leave part for member {member.id} moving from channel {channel_before.id}.")
+
+    # 移動先チャンネルにメンバーが入室した際の処理（移動用）
+    async def _process_member_join_for_move(self, member, channel_after):
+        logger.debug(f"[_process_member_join_for_move] Member {member.id} joining channel {channel_after.id}.")
+        guild_id = member.guild.id
+        key_after = (guild_id, channel_after.id)
 
         # 移動先チャンネルが一人以下になった場合、そのメンバーに対して一人以下の状態を開始
         if len(channel_after.members) == 1:
@@ -410,6 +417,19 @@ class VoiceEvents(commands.Cog):
             if key_after in self.sleep_check_manager.lonely_voice_channels:
                 logger.debug(f"Multiple members joined destination channel {channel_after.id} ({guild_id}). Removing lonely state.")
                 self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
+        logger.debug(f"Finished processing join part for member {member.id} moving to channel {channel_after.id}.")
+
+
+    # チャンネル間を移動した場合の処理
+    async def _handle_move(self, member, channel_before, channel_after):
+        logger.info(f"Member {member.id} moved from channel {channel_before.id} ({channel_before.name}) to channel {channel_after.id} ({channel_after.name}).")
+        guild_id = member.guild.id
+
+        # 移動元チャンネルの退出処理
+        await self._process_member_leave_for_move(member, channel_before)
+
+        # 移動先チャンネルの入室処理
+        await self._process_member_join_for_move(member, channel_after)
 
         # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
         ended_sessions_from_before, joined_session_data = await self.voice_state_manager.notify_member_moved(member, channel_before, channel_after)
