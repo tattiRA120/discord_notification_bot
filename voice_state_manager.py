@@ -140,6 +140,17 @@ class StatisticalSessionManager:
     def update_session_members(self, guild_id: int, channel: discord.VoiceChannel):
         """
         既存の2人以上通話セッションにメンバーの出入りを反映します。
+
+        Args:
+            guild_id (int): ギルドID。
+            channel (discord.VoiceChannel): ボイスチャンネルオブジェクト。
+
+        Returns:
+            list[tuple[int, float, datetime.datetime]]: 終了した個別のメンバーセッションデータのリスト。
+                各タプルは (member_id, duration, join_time) の形式です。
+                - member_id (int): 退出したメンバーのID。
+                - duration (float): そのメンバーのセッション時間（秒）。
+                - join_time (datetime.datetime): そのメンバーがチャンネルに参加した時刻（UTC）。
         """
         logger.debug(f"Updating two-or-more-member call session members in channel {channel.id} ({guild_id}).")
         now = datetime.datetime.now(datetime.timezone.utc)
@@ -173,7 +184,17 @@ class StatisticalSessionManager:
     async def end_session(self, guild_id: int, channel: discord.VoiceChannel):
         """
         2人以上通話セッションを終了し、データベースに記録します。
-        終了した個別のメンバーセッションデータを返します。
+
+        Args:
+            guild_id (int): ギルドID。
+            channel (discord.VoiceChannel): ボイスチャンネルオブジェクト。
+
+        Returns:
+            list[tuple[int, float, datetime.datetime]]: 終了した個別のメンバーセッションデータのリスト。
+                各タプルは (member_id, duration, join_time) の形式です。
+                - member_id (int): セッション終了時にチャンネルにいたメンバーのID。
+                - duration (float): そのメンバーのセッション時間（秒）。
+                - join_time (datetime.datetime): そのメンバーがチャンネルに参加した時刻（UTC）。
         """
         logger.info(f"Ending two-or-more-member call session for channel {channel.id} ({guild_id}).")
         key = (guild_id, channel.id)
