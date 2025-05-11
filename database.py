@@ -602,13 +602,4 @@ async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_
              logger.error(f"An error occurred during rollback: {rollback_e}")
         raise # エラーを再送出
 
-async def close_db(conn):
-    """
-    データベース接続を閉じます。
-    """
-    if conn:
-        try:
-            await conn.close()
-            logger.debug("Database connection closed.")
-        except Exception as e:
-            logger.error(f"An error occurred while closing database connection: {e}")
+# close_db 関数は、DatabaseConnection コンテキストマネージャーや init_db 関数内で接続が閉じられるため、不要と判断し削除しました。
