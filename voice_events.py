@@ -57,6 +57,21 @@ class SleepCheckManager:
             if cancel_task and self.lonely_voice_channels[key]["task"] and not self.lonely_voice_channels[key]["task"].cancelled():
                 self.lonely_voice_channels[key]["task"].cancel()
                 logger.debug(f"Cancelled lonely state task for channel {channel_id} ({guild_id}).")
+
+            # このチャンネルに関連付けられたリアクション監視タスクもキャンセル
+            message_ids_to_remove = []
+            for message_id, data in self.sleep_check_messages.items():
+                # チャンネルIDとメンバーIDが一致するリアクション監視タスクをキャンセル
+                if data.get("channel_id") == channel_id and data.get("member_id") == self.lonely_voice_channels[key]["member_id"]:
+                     if data["task"] and not data["task"].cancelled():
+                         data["task"].cancel()
+                         logger.info(f"Cancelled reaction monitoring task for message {message_id} in channel {channel_id} ({guild_id}).")
+                     message_ids_to_remove.append(message_id)
+
+            for message_id in message_ids_to_remove:
+                self.sleep_check_messages.pop(message_id)
+                logger.debug(f"Removed message {message_id} from sleep_check_messages.")
+
             self.lonely_voice_channels.pop(key)
             logger.info(f"Removed lonely state for channel {channel_id} ({guild_id}).")
 
@@ -99,8 +114,8 @@ class SleepCheckManager:
 
                         # リアクション監視タスクを開始
                         reaction_task = asyncio.create_task(self.wait_for_reaction(message.id, member_id, guild_id, channel_id, notification_channel_id))
-                        self.sleep_check_messages[message.id] = {"member_id": member_id, "task": reaction_task}
-                        logger.debug(f"Started reaction monitoring task. Message ID: {message.id}")
+                        self.sleep_check_messages[message.id] = {"member_id": member_id, "channel_id": channel_id, "task": reaction_task} # channel_id を追加
+                        logger.debug(f"Started reaction monitoring task. Message ID: {message.id}, Channel ID: {channel_id}")
 
                     except discord.Forbidden:
                         logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel_id}).")
@@ -341,7 +356,8 @@ class VoiceEvents(commands.Cog):
         # 退室したメンバーに関連付けられた寝落ち確認タスクがあればキャンセル
         message_ids_to_remove = []
         for message_id, data in self.sleep_check_manager.sleep_check_messages.items():
-            if data["member_id"] == member.id:
+            # 退室したメンバーに関連付けられたリアクション監視タスクをキャンセル
+            if data.get("member_id") == member.id:
                 if data["task"] and not data["task"].cancelled():
                     data["task"].cancel()
                     logger.info(f"Cancelled reaction monitoring task for message {message_id} due to member {member.id} leaving.")
@@ -425,10 +441,24 @@ class VoiceEvents(commands.Cog):
     # 移動先チャンネルにメンバーが入室した際の処理（移動用）
     async def _process_member_join_for_move(self, member, channel_after):
         logger.debug(f"[_process_member_join_for_move] Member {member.id} joining channel {channel_after.id}.")
+        guild_id = member.guild.id
+        key_after = (guild_id, channel_after.id)
 
         # 移動先チャンネルの状態に応じてLonely状態のチェックを開始/停止
-        await self.sleep_check_manager._start_lonely_check_if_needed(channel_after)
-        self.sleep_check_manager._stop_lonely_check_if_needed(channel_after)
+        # 入室したチャンネルが一人以下になった場合、そのメンバーに対して一人以下の状態を開始
+        if len(channel_after.members) == 1:
+            lonely_member = channel_after.members[0]
+            if key_after not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
+                logger.debug(f"Channel {channel_after.id} ({guild_id}) has one or fewer members. Starting sleep check. Member: {lonely_member.id}")
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id, notification_channel_id))
+                self.sleep_check_manager.add_lonely_channel(guild_id, channel_after.id, lonely_member.id, task)
+        # 入室したチャンネルが複数人になった場合、一人以下の状態を解除
+        elif len(channel_after.members) > 1:
+            if key_after in self.sleep_check_manager.lonely_voice_channels:
+                logger.debug(f"Multiple members joined channel {channel_after.id} ({guild_id}). Removing lonely state.")
+                self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
+
         logger.debug(f"Finished processing join part for member {member.id} moving to channel {channel_after.id}.")
 
 
@@ -436,6 +466,12 @@ class VoiceEvents(commands.Cog):
     async def _handle_move(self, member, channel_before, channel_after):
         logger.info(f"Member {member.id} moved from channel {channel_before.id} ({channel_before.name}) to channel {channel_after.id} ({channel_after.name}).")
         guild_id = member.guild.id
+        key_before = (guild_id, channel_before.id)
+
+        # 移動元のチャンネルに関連付けられた寝落ち確認タスクがあればキャンセル
+        if key_before in self.sleep_check_manager.lonely_voice_channels:
+            logger.debug(f"Member {member.id} moved. Cancelling lonely state task for source channel {channel_before.id} ({guild_id}).")
+            self.sleep_check_manager.remove_lonely_channel(guild_id, channel_before.id)
 
         # 移動元チャンネルの退出処理
         await self._process_member_leave_for_move(member, channel_before)
