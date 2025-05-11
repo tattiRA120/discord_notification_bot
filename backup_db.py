@@ -1,5 +1,4 @@
 import sqlite3
-import shutil
 import os
 import datetime
 import logging
