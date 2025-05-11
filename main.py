@@ -4,7 +4,7 @@ import os
 import asyncio
 import logging
 
-import constants # constants モジュールをインポート
+import constants
 
 # 他のモジュールのインポート
 from commands import BotCommands
@@ -12,7 +12,7 @@ from tasks import BotTasks
 from voice_events import VoiceEvents, SleepCheckManager
 from voice_state_manager import VoiceStateManager, CallNotificationManager, StatisticalSessionManager, BotStatusUpdater
 import config
-from database import init_db, close_db
+from database import init_db
 
 # ロギングの設定
 # 環境変数からロギングレベルを取得、設定されていなければ constants.LOGGING_LEVEL を使用
