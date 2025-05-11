@@ -372,16 +372,13 @@ class VoiceEvents(commands.Cog):
         logger.info(f"Starting processing of ended session data for guild {guild.id}. Data count: {len(ended_sessions_data)}")
         for member_id, duration, join_time in ended_sessions_data:
             logger.debug(f"Processing session end data for member {member_id}. Duration: {duration}, Join time: {join_time}")
-            # データベース操作: メンバーの合計通話時間を取得
+            # データベース操作: メンバーの合計通話時間を取得 (更新前の値)
             # TODO: get_total_call_time のエラーハンドリングを追加検討
             before_total = await get_total_call_time(member_id)
             month_key = join_time.strftime("%Y-%m")
-            # データベース操作: メンバーの月間統計を更新
+            # データベース操作: メンバーの月間統計を更新し、更新後の合計通話時間を取得
             # TODO: update_member_monthly_stats のエラーハンドリングを追加検討
-            await update_member_monthly_stats(month_key, member_id, duration)
-            # データベース操作: 更新後のメンバーの合計通話時間を取得
-            # TODO: get_total_call_time のエラーハンドリングを追加検討
-            after_total = await get_total_call_time(member_id)
+            after_total = await update_member_monthly_stats(month_key, member_id, duration)
             logger.debug(f"Updated monthly stats for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
             m_obj = guild.get_member(member_id)
             if m_obj:

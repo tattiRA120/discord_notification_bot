@@ -142,10 +142,16 @@ async def update_member_monthly_stats(month_key, member_id, duration):
             cursor = await conn.cursor()
             await cursor.execute(SQL_UPSERT_MEMBER_MONTHLY_STATS, (month_key, member_id, duration))
             await conn.commit()
-            logger.info(f"Updated monthly stats for member {member_id} (Month: {month_key}, Duration: {duration}).")
+            # 更新後の total_duration を取得して返す
+            await cursor.execute("SELECT total_duration FROM member_monthly_stats WHERE month_key = ? AND member_id = ?", (month_key, member_id))
+            result = await cursor.fetchone()
+            updated_total_duration = result['total_duration'] if result else constants.DEFAULT_TOTAL_DURATION
+            logger.info(f"Updated monthly stats for member {member_id} (Month: {month_key}, Duration: {duration}). New total: {updated_total_duration}")
+            return updated_total_duration
     except Exception as e:
         logger.error(f"An error occurred while updating member monthly stats (Month: {month_key}, Member ID: {member_id}, Duration: {duration}): {e}")
         # エラー発生時もロールバックは不要 (ON CONFLICT のため)
+        return constants.DEFAULT_TOTAL_DURATION # エラー時はデフォルト値を返す
 
 
 async def record_voice_session_to_db(session_start, session_duration, participants):
