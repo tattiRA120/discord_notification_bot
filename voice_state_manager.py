@@ -330,6 +330,7 @@ class BotStatusUpdater:
         if self.active_status_channels:
             logger.debug(f"Active status channels found: {self.active_status_channels}")
             # active_status_channelsからステータスに表示するチャンネルを一つ選択（セットなので順序は保証されない）
+            # NOTE: 表示されるチャンネルは任意であり、特定の基準に基づいているわけではありません。
             channel_key_to_display = next(iter(self.active_status_channels))
             guild_id, channel_id = channel_key_to_display
             guild = self.bot.get_guild(guild_id)
