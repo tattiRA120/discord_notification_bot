@@ -3,34 +3,34 @@
 
 # Describe the main purpose of each file.
 [file: main.py]
-Role: The main entry point of the Discord bot. It handles bot startup, event loop management, and loading other modules.
+Role: The main entry point of the Discord bot. It handles bot startup, database initialization, Cog loading, task starting, and slash command registration/synchronization.
 
 [file: commands.py]
-Role: Defines Discord slash commands and their corresponding processing. It receives command input from users and executes appropriate processing.
+Role: Defines Discord slash commands and their corresponding processing, including fetching and displaying statistics and managing guild settings.
 
 [file: tasks.py]
-Role: Defines tasks that are executed periodically (e.g., automatic sending of statistics). Includes task loops using discord.ext.tasks.
+Role: Defines periodic tasks using discord.ext.tasks, such as sending monthly and annual statistics.
 
 [file: voice_events.py]
-Role: Defines handlers for events related to voice channels (join, leave, mute, etc.). Includes logic such as recording call time and checking if users have fallen asleep.
+Role: Defines handlers for voice channel related events (join, leave, move, state changes). Includes logic for sleep checking, automatic muting, and call time milestone notifications.
 
 [file: database.py]
-Role: Defines functions for accessing and manipulating the SQLite database (connection, query execution, data saving/retrieval). Other files interact with the database through this module.
+Role: Provides asynchronous functions for accessing and manipulating the SQLite database, managing data for voice sessions, participants, monthly statistics, and guild settings.
 
 [file: config.py]
-Role: Holds configuration-related information for the bot.
+Role: Manages bot configuration, specifically saving, loading, and accessing notification channel IDs per guild.
 
 [file: formatters.py]
-Role: Contains utility functions for formatting and displaying data.
+Role: Contains utility functions for formatting data, such as converting seconds to HH:MM:SS format and converting UTC time to JST.
 
 [file: voice_state_manager.py]
-Role: Manages the state and logic related to voice channels.
+Role: Coordinates voice channel state changes and delegates processing to specialized components: CallNotificationManager, StatisticalSessionManager, and BotStatusUpdater.
 
 [file: backup_db.py]
-Role: Handles the database backup process.
+Role: Handles the SQLite database backup process, including creating backup files and managing retention.
 
 [file: constants.py]
-Role: Defines constant values used throughout the bot.
+Role: Defines constant values used throughout the bot for various purposes including time, database, milestones, backup, tasks, logging, bot settings, embeds, messages, fields, voice states, reactions, mentions, and configuration.
 
 # You can also add more specific rules or information, e.g.,
 # [rule: Avoid direct database access outside of database.py]
