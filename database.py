@@ -1,7 +1,7 @@
 import aiosqlite
 import os
-import logging # logging モジュールをインポート
-import constants # constants モジュールをインポート
+import logging
+import constants
 
 # ロガーを取得
 logger = logging.getLogger(__name__)
