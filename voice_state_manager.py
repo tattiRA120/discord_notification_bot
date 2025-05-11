@@ -198,6 +198,7 @@ class StatisticalSessionManager:
             # セッション全体の通話時間を計算し、データベースに記録
             overall_duration = (now - session_data["session_start"]).total_seconds()
             logger.info(f"Recording overall two-or-more-member call session for channel {channel.id} ({guild_id}). Start time: {session_data['session_start']}, Duration: {overall_duration}, All participants: {list(session_data['all_participants'])}")
+            # TODO: データベース操作のエラーハンドリングを追加する（例: try...except）
             await record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
             self.active_voice_sessions.pop(key, None) # アクティブセッションから削除
             logger.debug(f"Removed channel {key} from active_voice_sessions.")
