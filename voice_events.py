@@ -312,6 +312,18 @@ class VoiceEvents(commands.Cog):
                             except Exception as e:
                                 logger.error(f"An error occurred while sending unmute on rejoin message: {e}")
 
+                    # ミュート解除後、チャンネルに一人以下であれば再度寝落ちチェックを開始
+                    current_channel = m.voice.channel
+                    if current_channel and len(current_channel.members) <= 1:
+                         key_current = (m.guild.id, current_channel.id)
+                         # すでにLonely状態のタスクがない場合のみ新規タスクを開始
+                         if key_current not in self.sleep_check_manager.lonely_voice_channels:
+                             logger.debug(f"Channel {current_channel.id} ({m.guild.id}) has one or fewer members after unmute. Starting sleep check. Member: {m.id}")
+                             notification_channel_id_recheck = config.get_notification_channel_id(m.guild.id)
+                             task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(m.guild.id, current_channel.id, m.id, notification_channel_id_recheck))
+                             self.sleep_check_manager.add_lonely_channel(m.guild.id, current_channel.id, m.id, task)
+                             logger.info(f"Restarted sleep check for member {m.id} in channel {current_channel.id}.")
+
                 except discord.Forbidden:
                     logger.error(f"Error: No permission to unmute member {m.display_name} ({m.id}).")
                 except Exception as e:
