@@ -554,9 +554,11 @@ async def update_guild_settings(guild_id, lonely_timeout_minutes=None, reaction_
             logger.info(f"Updating settings for guild {guild_id}. lonely_timeout_minutes: {lonely_timeout_minutes}, reaction_wait_minutes: {reaction_wait_minutes}")
 
             # 現在の設定を取得して、更新されないパラメータのデフォルト値を決定
-            # ここでget_guild_settingsを呼び出すと、その内部でもDatabaseConnectionが使われるため、
-            # 意図しない多重接続やデッドロックの可能性はないか注意が必要ですが、
-            # get_guild_settingsは単にSELECTを行うだけなので、ここでは問題ないと判断します。
+            # update_guild_settings内で確立した接続をget_guild_settingsに渡すことで
+            # データベース接続の効率化を目指したが、接続のライフサイクル管理の問題から
+            # Connection closedエラーが発生した。
+            # 今後の改善策として、get_guild_settingsが必須で接続を受け取るようにし、
+            # 呼び出し元が接続の確立・クローズを責任持つようにするリファクタリングが必要。
             settings = await get_guild_settings(guild_id)
 
             set_clauses = []
