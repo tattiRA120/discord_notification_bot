@@ -43,6 +43,8 @@ async def init_db():
         # month_key: 年月 (YYYY-MM 形式)
         # start_time: セッション開始時刻 (ISO 8601 形式)
         # duration: セッション期間 (秒単位)
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {constants.TABLE_SESSIONS} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +60,8 @@ async def init_db():
         # member_id: メンバーID
         # PRIMARY KEY (session_id, member_id): セッションとメンバーの組み合わせで一意
         # FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE: sessions のレコード削除時に連動して削除
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {constants.TABLE_SESSION_PARTICIPANTS} (
                 {constants.COLUMN_SESSION_ID} INTEGER,
@@ -73,6 +77,8 @@ async def init_db():
         # member_id: メンバーID
         # total_duration: 月間累計通話時間 (秒単位)
         # PRIMARY KEY (month_key, member_id): 年月とメンバーの組み合わせで一意
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {constants.TABLE_MEMBER_MONTHLY_STATS} (
                 {constants.COLUMN_MONTH_KEY} TEXT NOT NULL,
@@ -87,6 +93,8 @@ async def init_db():
         # guild_id: ギルドID (主キー)
         # lonely_timeout_minutes: 一人以下の状態が続く時間 (分単位)
         # reaction_wait_minutes: 寝落ち確認メッセージへの反応を待つ時間 (分単位)
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"""
             CREATE TABLE IF NOT EXISTS {constants.TABLE_SETTINGS} (
                 {constants.COLUMN_GUILD_ID} TEXT PRIMARY KEY,
@@ -97,10 +105,20 @@ async def init_db():
         logger.debug(f"Checked or created table '{constants.TABLE_SETTINGS}'.")
 
         # インデックスの作成 (クエリパフォーマンス向上のため)
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_sessions_month_key ON {constants.TABLE_SESSIONS} ({constants.COLUMN_MONTH_KEY})")
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_session_participants_session_id ON {constants.TABLE_SESSION_PARTICIPANTS} ({constants.COLUMN_SESSION_ID})")
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_session_participants_member_id ON {constants.TABLE_SESSION_PARTICIPANTS} ({constants.COLUMN_MEMBER_ID})")
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_member_monthly_stats_month_key ON {constants.TABLE_MEMBER_MONTHLY_STATS} ({constants.COLUMN_MONTH_KEY})")
+        # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+        # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_member_monthly_stats_member_id ON {constants.TABLE_MEMBER_MONTHLY_STATS} ({constants.COLUMN_MEMBER_ID})")
         logger.debug("Checked or created indexes.")
 
@@ -195,6 +213,8 @@ async def record_voice_session_to_db(session_start, session_duration, participan
 
 # SQL Queries
 # メンバーの総通話時間を取得するクエリ
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_GET_TOTAL_CALL_TIME = f"""
     SELECT SUM({constants.COLUMN_TOTAL_DURATION}) as total
     FROM {constants.TABLE_MEMBER_MONTHLY_STATS}
@@ -202,24 +222,38 @@ SQL_GET_TOTAL_CALL_TIME = f"""
 """
 
 # ギルド設定を取得するクエリ
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_GET_GUILD_SETTINGS = f"SELECT * FROM {constants.TABLE_SETTINGS} WHERE {constants.COLUMN_GUILD_ID} = ?"
 
 # settings テーブルへの挿入クエリ
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_UPSERT_SETTINGS_INSERT = f"INSERT INTO {constants.TABLE_SETTINGS} ({constants.COLUMN_GUILD_ID}, {constants.COLUMN_LONELY_TIMEOUT_MINUTES}, {constants.COLUMN_REACTION_WAIT_MINUTES}) VALUES (?, ?, ?)"
 # settings テーブル更新時の SET 句 (lonely_timeout_minutes)
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_UPSERT_SETTINGS_UPDATE_SET_LONELY = f"{constants.COLUMN_LONELY_TIMEOUT_MINUTES} = ?"
 # settings テーブル更新時の SET 句 (reaction_wait_minutes)
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_UPSERT_SETTINGS_UPDATE_SET_REACTION = f"{constants.COLUMN_REACTION_WAIT_MINUTES} = ?"
 # settings テーブル更新時の ON CONFLICT 句
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_UPSERT_SETTINGS_ON_CONFLICT = f"ON CONFLICT({constants.COLUMN_GUILD_ID}) DO UPDATE SET "
 
 # sessions テーブルへの挿入クエリ
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_INSERT_SESSION = f"""
     INSERT INTO {constants.TABLE_SESSIONS} ({constants.COLUMN_MONTH_KEY}, {constants.COLUMN_START_TIME}, duration)
     VALUES (?, ?, ?)
 """
 
 # session_participants テーブルへの挿入クエリ
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_INSERT_SESSION_PARTICIPANTS = f"""
     INSERT INTO {constants.TABLE_SESSION_PARTICIPANTS} ({constants.COLUMN_SESSION_ID}, {constants.COLUMN_MEMBER_ID})
     VALUES (?, ?)
@@ -227,6 +261,8 @@ SQL_INSERT_SESSION_PARTICIPANTS = f"""
 
 # member_monthly_stats テーブルへの UPSERT (INSERT or UPDATE) クエリ
 # 指定された月とメンバーの組み合わせが存在する場合は total_duration を加算して更新
+# TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+# より構造的なクエリビルダやライブラリの利用も検討可能。
 SQL_UPSERT_MEMBER_MONTHLY_STATS = f"""
     INSERT INTO {constants.TABLE_MEMBER_MONTHLY_STATS} ({constants.COLUMN_MONTH_KEY}, {constants.COLUMN_MEMBER_ID}, {constants.COLUMN_TOTAL_DURATION})
     VALUES (?, ?, ?)
@@ -248,6 +284,8 @@ async def get_participants_by_session_ids(session_ids: list):
 
             # 全セッションの参加者を一度に取得
             placeholders = ','.join('?' for _ in session_ids)
+            # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+            # より構造的なクエリビルダやライブラリの利用も検討可能。
             await cursor.execute(f"""
                 SELECT session_id, member_id FROM session_participants
                 WHERE session_id IN ({placeholders})
@@ -448,6 +486,8 @@ async def get_total_call_time_for_guild_members(member_ids: list):
 
             # 指定されたメンバーIDの総通話時間をまとめて取得
             placeholders = ','.join('?' for _ in member_ids)
+            # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
+            # より構造的なクエリビルダやライブラリの利用も検討可能。
             await cursor.execute(f"""
                 SELECT member_id, SUM({constants.COLUMN_TOTAL_DURATION}) as total
                 FROM {constants.TABLE_MEMBER_MONTHLY_STATS}
