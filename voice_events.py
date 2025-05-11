@@ -406,22 +406,10 @@ class VoiceEvents(commands.Cog):
     # 移動先チャンネルにメンバーが入室した際の処理（移動用）
     async def _process_member_join_for_move(self, member, channel_after):
         logger.debug(f"[_process_member_join_for_move] Member {member.id} joining channel {channel_after.id}.")
-        guild_id = member.guild.id
-        key_after = (guild_id, channel_after.id)
 
-        # 移動先チャンネルが一人以下になった場合、そのメンバーに対して一人以下の状態を開始
-        if len(channel_after.members) == 1:
-            lonely_member = channel_after.members[0]
-            if key_after not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
-                logger.debug(f"Destination channel {channel_after.id} ({guild_id}) has one or fewer members. Starting sleep check. Member: {lonely_member.id}")
-                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
-                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id, notification_channel_id))
-                self.sleep_check_manager.add_lonely_channel(guild_id, channel_after.id, lonely_member.id, task)
-        # 移動先チャンネルが複数人になった場合、一人以下の状態を解除
-        elif len(channel_after.members) > 1:
-            if key_after in self.sleep_check_manager.lonely_voice_channels:
-                logger.debug(f"Multiple members joined destination channel {channel_after.id} ({guild_id}). Removing lonely state.")
-                self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
+        # 移動先チャンネルの状態に応じてLonely状態のチェックを開始/停止
+        await self.sleep_check_manager._start_lonely_check_if_needed(channel_after)
+        self.sleep_check_manager._stop_lonely_check_if_needed(channel_after)
         logger.debug(f"Finished processing join part for member {member.id} moving to channel {channel_after.id}.")
 
 
