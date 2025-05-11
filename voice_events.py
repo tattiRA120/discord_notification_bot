@@ -364,13 +364,23 @@ class VoiceEvents(commands.Cog):
         """
         VoiceStateManagerから返された終了した個別のメンバーセッションデータを処理し、
         統計更新とマイルストーン通知を行います。
+
+        TODO: データベース操作におけるエラーハンドリング（try...except）を追加検討
+        現在の実装では、データベース操作中にエラーが発生した場合、例外が捕捉されず、
+        予期しない動作やボットのクラッシュにつながる可能性があります。
         """
         logger.info(f"Starting processing of ended session data for guild {guild.id}. Data count: {len(ended_sessions_data)}")
         for member_id, duration, join_time in ended_sessions_data:
             logger.debug(f"Processing session end data for member {member_id}. Duration: {duration}, Join time: {join_time}")
+            # データベース操作: メンバーの合計通話時間を取得
+            # TODO: get_total_call_time のエラーハンドリングを追加検討
             before_total = await get_total_call_time(member_id)
             month_key = join_time.strftime("%Y-%m")
+            # データベース操作: メンバーの月間統計を更新
+            # TODO: update_member_monthly_stats のエラーハンドリングを追加検討
             await update_member_monthly_stats(month_key, member_id, duration)
+            # データベース操作: 更新後のメンバーの合計通話時間を取得
+            # TODO: get_total_call_time のエラーハンドリングを追加検討
             after_total = await get_total_call_time(member_id)
             logger.debug(f"Updated monthly stats for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
             m_obj = guild.get_member(member_id)
