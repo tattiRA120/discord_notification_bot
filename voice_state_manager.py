@@ -24,6 +24,28 @@ class CallNotificationManager:
         self.call_sessions = {}
         logger.debug("Initialized call_sessions dictionary in CallNotificationManager.")
 
+    async def _send_notification_embed(self, guild_id: int, embed: discord.Embed, content: str = None, allowed_mentions: discord.AllowedMentions = None):
+        """
+        指定されたギルドの通知チャンネルにEmbedを送信します。
+        通知チャンネルの取得、存在確認、Embed送信、例外処理を行います。
+        """
+        notification_channel_id = get_notification_channel_id(guild_id)
+        if notification_channel_id:
+            notification_channel = self.bot.get_channel(notification_channel_id)
+            if notification_channel:
+                try:
+                    await notification_channel.send(content=content, embed=embed, allowed_mentions=allowed_mentions)
+                    logger.info(f"Sent notification to channel {notification_channel_id}.")
+                except discord.Forbidden:
+                    logger.error(f"Error: Missing send permissions for channel {notification_channel.name} ({notification_channel_id}).")
+                except Exception as e:
+                    logger.error(f"An error occurred while sending notification: {e}")
+            else:
+                # 通知チャンネルが見つからない場合のログ出力
+                logging.warning(f"Notification channel not found: Guild ID {guild_id}")
+        else:
+            logger.info(f"Notification channel not set for guild {guild_id}. Notification will not be sent.")
+
     async def notify_call_start(self, member: discord.Member, channel: discord.VoiceChannel):
         """
         メンバーがボイスチャンネルに参加した際に通話開始通知を送信します。
@@ -55,23 +77,8 @@ class CallNotificationManager:
              embed.add_field(name=constants.EMBED_FIELD_CHANNEL, value=f"{channel.name}")
              embed.add_field(name=constants.EMBED_FIELD_STARTED_BY, value=f"{member.display_name}")
              embed.add_field(name=constants.EMBED_FIELD_START_TIME, value=f"{jst_time.strftime('%Y/%m/%d %H:%M:%S')}")
-             # 通知チャンネルを取得し、通知を送信
-             notification_channel_id = get_notification_channel_id(guild_id)
-             if notification_channel_id:
-                 notification_channel = self.bot.get_channel(notification_channel_id)
-                 if notification_channel:
-                     try:
-                         await notification_channel.send(content=constants.MENTION_EVERYONE, embed=embed, allowed_mentions=constants.ALLOWED_MENTIONS_EVERYONE)
-                         logger.info(f"Sent call start notification to channel {notification_channel_id}.")
-                     except discord.Forbidden:
-                         logger.error(f"Error: Missing send permissions for channel {notification_channel.name} ({notification_channel_id}).")
-                     except Exception as e:
-                         logger.error(f"An error occurred while sending call start notification: {e}")
-                 else:
-                     # 通知チャンネルが見つからない場合のログ出力
-                     logging.warning(f"Notification channel not found: Guild ID {guild_id}")
-             else:
-                 logger.info(f"Notification channel not set for guild {guild_id}. Call start notification will not be sent.")
+             # 通知を送信
+             await self._send_notification_embed(guild_id, embed, content=constants.MENTION_EVERYONE, allowed_mentions=constants.ALLOWED_MENTIONS_EVERYONE)
         else:
             logger.debug(f"Channel {channel.id} ({guild_id}) has an existing call session. Skipping call start notification.")
 
@@ -94,23 +101,8 @@ class CallNotificationManager:
             embed = discord.Embed(title=constants.EMBED_TITLE_CALL_END, color=constants.EMBED_COLOR_CALL_END)
             embed.add_field(name="チャンネル", value=f"{channel.name}")
             embed.add_field(name="通話時間", value=f"{duration_str}")
-            # 通知チャンネルを取得し、通知を送信
-            notification_channel_id = get_notification_channel_id(guild_id)
-            if notification_channel_id:
-                notification_channel = self.bot.get_channel(notification_channel_id)
-                if notification_channel:
-                    try:
-                        await notification_channel.send(embed=embed)
-                        logger.info(f"Sent call end notification to channel {notification_channel_id}.")
-                    except discord.Forbidden:
-                        logger.error(f"Error: Missing send permissions for channel {notification_channel.name} ({notification_channel_id}).")
-                    except Exception as e:
-                        logger.error(f"An error occurred while sending call end notification: {e}")
-                else:
-                    # 通知チャンネルが見つからない場合のログ出力
-                    logging.warning(f"Notification channel not found: Guild ID {guild_id}")
-            else:
-                logger.info(f"Notification channel not set for guild {guild_id}. Call end notification will not be sent.")
+            # 通知を送信
+            await self._send_notification_embed(guild_id, embed)
         else:
             logger.debug(f"No active call session in channel {voice_channel_id} ({guild_id}).")
 
