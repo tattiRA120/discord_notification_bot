@@ -112,7 +112,7 @@ async def on_ready():
             logging.error(f'Failed to register or sync commands for guild {guild.id} ({guild.name}): {e}')
 
     logging.info(f'Command registration and synchronization completed. Successfully synced in {synced_guild_count} guilds.')
-    logging.info('Bot is ready.')
+    logging.warning('Bot is ready.')
 
 # Botの実行
 if __name__ == "__main__":
