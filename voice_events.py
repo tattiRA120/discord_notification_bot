@@ -202,6 +202,25 @@ class SleepCheckManager:
             # ヘルパー関数を使用してメッセージを削除
             await self._delete_sleep_check_message(message_id, notification_channel_id)
 
+            # チャンネルの状態管理から削除（再チェックの前に実行）
+            key = (guild_id, channel_id)
+            if key in self.lonely_voice_channels:
+                 self.lonely_voice_channels.pop(key)
+                 logger.debug(f"Removed channel {channel_id} ({guild_id}) from lonely_voice_channels before recheck.")
+
+            # リアクションがありミュートがキャンセルされた後、チャンネルに一人以下のメンバーしかいない場合は再度寝落ちチェックを開始
+            current_channel = guild.get_channel(channel_id)
+            logger.debug(f"Debug: After reaction, current_channel: {current_channel}, members count: {len(current_channel.members) if current_channel else 'N/A'}")
+            if current_channel and len(current_channel.members) <= 1:
+                 key_current = (guild_id, current_channel.id)
+                 # すでにLonely状態のタスクがない場合のみ新規タスクを開始
+                 if key_current not in self.lonely_voice_channels:
+                     logger.debug(f"Channel {current_channel.id} ({guild_id}) has one or fewer members after reaction. Starting sleep check. Member: {member_id}")
+                     notification_channel_id_recheck = config.get_notification_channel_id(guild_id)
+                     task = asyncio.create_task(self.check_lonely_channel(guild_id, current_channel.id, member_id, notification_channel_id_recheck))
+                     self.add_lonely_channel(guild_id, current_channel.id, member_id, task)
+                     logger.info(f"Restarted sleep check for member {member_id} in channel {current_channel.id} after reaction.")
+
         except asyncio.TimeoutError:
             # タイムアウトした場合、ミュート処理を実行
             logger.info(f"No reaction to message {message_id}. Muting member {member_id}.")
@@ -244,11 +263,6 @@ class SleepCheckManager:
             if message_id in self.sleep_check_messages:
                 self.sleep_check_messages.pop(message_id)
                 logger.debug(f"Removed message {message_id} from sleep_check_messages.")
-            # チャンネルの状態管理からも削除（ミュートされたか反応があったかで一人以下の状態は終了とみなす）
-            key = (guild_id, channel_id)
-            if key in self.lonely_voice_channels:
-                 self.lonely_voice_channels.pop(key)
-                 logger.debug(f"Removed channel {channel_id} ({guild_id}) from lonely_voice_channels.")
 
     # get_lonely_timeout_seconds を SleepCheckManager のメソッドとして移動
     async def _get_lonely_timeout_seconds(self, guild_id):
