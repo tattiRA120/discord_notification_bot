@@ -1,355 +1,652 @@
 import discord
 import datetime
 import asyncio
+import logging
+from discord.ext import commands # Cog を使用するためにインポート
 
-import utils
 from database import get_total_call_time, get_guild_settings, update_member_monthly_stats, record_voice_session_to_db
+import config
+from voice_state_manager import VoiceStateManager, CallNotificationManager, StatisticalSessionManager, BotStatusUpdater
+import formatters
+import constants
 
-# 一人以下の状態になった通話チャンネルとその時刻、メンバー、関連タスクを記録する辞書
-# キー: (guild_id, voice_channel_id), 値: {"start_time": datetimeオブジェクト, "member_id": int, "task": asyncio.Task}
-lonely_voice_channels = {}
+# ロガーを取得
+logger = logging.getLogger(__name__)
 
-# 寝落ち確認メッセージとそれに対するリアクション監視タスクを記録する辞書
-# キー: message_id, 値: {"member_id": int, "task": asyncio.Task}
-sleep_check_messages = {}
+class SleepCheckManager:
+    def __init__(self, bot):
+        self.bot = bot
+        logger.info("SleepCheckManager initialized.")
+        # 一人以下の状態になった通話チャンネルとその時刻、メンバー、関連タスクを記録する辞書
+        # キー: (guild_id, voice_channel_id), 値: {"start_time": datetimeオブジェクト, "member_id": int, "task": asyncio.Task}
+        self.lonely_voice_channels = {}
 
-# ボットがサーバーミュートしたメンバーのIDを記録するリスト
-bot_muted_members = []
+        # 寝落ち確認メッセージとそれに対するリアクション監視タスクを記録する辞書
+        # キー: message_id, 値: {"member_id": int, "task": asyncio.Task, "channel_id": int, "notification_channel_id": int}
+        self.sleep_check_messages = {}
 
-# --- 寝落ち確認とミュート処理 ---
-async def check_lonely_channel(guild_id: int, channel_id: int, member_id: int):
-    await asyncio.sleep(await get_lonely_timeout_seconds(guild_id)) # 設定された時間待機
+        # ボットがサーバーミュートしたメンバーのIDを記録するリスト
+        self.bot_muted_members = []
 
-    # 再度チャンネルの状態を確認
-    guild = utils.bot.get_guild(guild_id)
-    if not guild:
-        return
-    channel = guild.get_channel(channel_id)
-    if not channel or len(channel.members) > 1 or (len(channel.members) == 1 and channel.members[0].id != member_id):
-        # チャンネルが存在しない、複数人になった、または別の人が一人になった場合は処理しない
+    # メッセージを削除するヘルパー関数
+    async def _delete_sleep_check_message(self, message_id: int, notification_channel_id: int | None):
+        if notification_channel_id:
+            try:
+                channel = self.bot.get_channel(notification_channel_id)
+                if channel:
+                    message = await channel.fetch_message(message_id)
+                    await message.delete()
+                    logger.info(f"Deleted sleep check message {message_id}.")
+                else:
+                    logger.warning(f"Notification channel {notification_channel_id} not found. Could not delete message {message_id}.")
+            except discord.NotFound:
+                logger.warning(f"Sleep check message {message_id} not found. Could not delete.")
+            except discord.Forbidden:
+                logger.error(f"Error: No permission to delete message {message_id} in channel {notification_channel_id}.")
+            except Exception as e:
+                logger.error(f"An error occurred while deleting message {message_id}: {e}")
+
+    # bot_muted_members にメンバーを追加するヘルパー関数
+    def add_bot_muted_member(self, member_id: int):
+        if member_id not in self.bot_muted_members:
+            self.bot_muted_members.append(member_id)
+            logger.info(f"Added member {member_id} to bot_muted_members.")
+
+    # bot_muted_members からメンバーを削除するヘルパー関数
+    def remove_bot_muted_member(self, member_id: int):
+        if member_id in self.bot_muted_members:
+            self.bot_muted_members.remove(member_id)
+            logger.info(f"Removed member {member_id} from bot_muted_members.")
+
+    # lonely_voice_channels にチャンネルを追加するヘルパー関数
+    def add_lonely_channel(self, guild_id: int, channel_id: int, member_id: int, task: asyncio.Task):
         key = (guild_id, channel_id)
-        if key in lonely_voice_channels:
-             lonely_voice_channels.pop(key) # 状態管理から削除
-        return
+        self.lonely_voice_channels[key] = {
+            "start_time": datetime.datetime.now(datetime.timezone.utc),
+            "member_id": member_id,
+            "task": task
+        }
+        logger.info(f"Channel {channel_id} ({guild_id}) has one or fewer members. Member: {member_id}")
 
-    # まだ一人以下の状態の場合、寝落ち確認メッセージを送信
-    if str(guild_id) in utils.server_notification_channels:
-        notification_channel_id = utils.server_notification_channels[str(guild_id)]
-        notification_channel = utils.bot.get_channel(notification_channel_id)
-        if notification_channel:
-            lonely_member = guild.get_member(member_id)
-            if lonely_member:
-                embed = discord.Embed(
-                    title="寝落ちミュート",
-                    description=f"{lonely_member.mention} さん、{channel.name} chで一人になってから時間が経ちました。\n寝落ちしていませんか？反応がない場合、自動でサーバーミュートします。\nミュートをキャンセルする場合は、 :white_check_mark: を押してください。",
-                    color=discord.Color.orange()
-                )
-                try:
-                    message = await notification_channel.send(embed=embed)
-                    await message.add_reaction("✅") # :white_check_mark: 絵文字を追加
+    # lonely_voice_channels からチャンネルを削除するヘルパー関数
+    async def remove_lonely_channel(self, guild_id: int, channel_id: int, cancel_task: bool = True):
+        key = (guild_id, channel_id)
+        if key in self.lonely_voice_channels:
+            if cancel_task and self.lonely_voice_channels[key]["task"] and not self.lonely_voice_channels[key]["task"].cancelled():
+                self.lonely_voice_channels[key]["task"].cancel()
+                logger.debug(f"Cancelled lonely state task for channel {channel_id} ({guild_id}).")
 
-                    # リアクション監視タスクを開始
-                    reaction_task = asyncio.create_task(wait_for_reaction(message.id, member_id, guild_id, channel_id))
-                    sleep_check_messages[message.id] = {"member_id": member_id, "task": reaction_task}
+            # このチャンネルに関連付けられたリアクション監視タスクもキャンセルし、メッセージを削除
+            message_ids_to_remove = []
+            for message_id, data in self.sleep_check_messages.items():
+                # チャンネルIDとメンバーIDが一致するリアクション監視タスクをキャンセル
+                if data.get("channel_id") == channel_id and data.get("member_id") == self.lonely_voice_channels[key]["member_id"]:
+                     if data["task"] and not data["task"].cancelled():
+                         data["task"].cancel()
+                         logger.info(f"Cancelled reaction monitoring task for message {message_id} in channel {channel_id} ({guild_id}).")
+                     message_ids_to_remove.append(message_id)
 
-                except discord.Forbidden:
-                    print(f"エラー: チャンネル {notification_channel.name} ({notification_channel_id}) への送信権限がありません。")
-                except Exception as e:
-                    print(f"寝落ち確認メッセージ送信中にエラーが発生しました: {e}")
-            else:
-                 # メンバーが見つからない場合も状態管理から削除
-                 key = (guild_id, channel_id)
-                 if key in lonely_voice_channels:
-                    lonely_voice_channels.pop(key)
-        else:
-            print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
-            # 通知チャンネルがない場合も状態管理から削除
+            for message_id in message_ids_to_remove:
+                # タスクはキャンセルしたが、メッセージの削除と sleep_check_messages からの削除は呼び出し元で行う
+                logger.debug(f"Task for message {message_id} cancelled.")
+
+            self.lonely_voice_channels.pop(key)
+            logger.info(f"Removed lonely state for channel {channel_id} ({guild_id}).")
+
+    # --- 寝落ち確認とミュート処理 ---
+    async def check_lonely_channel(self, guild_id: int, channel_id: int, member_id: int, notification_channel_id: int | None):
+        logger.info(f"Starting lonely state check for channel {channel_id} ({guild_id}). Member: {member_id}")
+        timeout_seconds = await self._get_lonely_timeout_seconds(guild_id)
+        logger.debug(f"Configured timeout: {timeout_seconds} seconds")
+        await asyncio.sleep(timeout_seconds) # 設定された時間待機
+
+        # 再度チャンネルの状態を確認
+        guild = self.bot.get_guild(guild_id)
+        if not guild:
+            logger.warning(f"Guild {guild_id} not found. Ending lonely state check.")
+            # タスクが完了したので lonely_voice_channels から削除
             key = (guild_id, channel_id)
-            if key in lonely_voice_channels:
-                lonely_voice_channels.pop(key)
-    else:
-        print(f"ギルド {guild.name} ({guild_id}) の通知チャンネルが設定されていません。寝落ち確認メッセージを送信できません。")
-        # 通知チャンネルが設定されていない場合も状態管理から削除
-        key = (guild_id, channel_id)
-        if key in lonely_voice_channels:
-            lonely_voice_channels.pop(key)
+            if key in self.lonely_voice_channels:
+                self.lonely_voice_channels.pop(key)
+            return
+        channel = guild.get_channel(channel_id)
+        # チャンネルが存在しない、またはタイムアウトしたメンバーがチャンネルにいない場合は処理しない
+        if not channel or member_id not in [m.id for m in channel.members]:
+            logger.info(f"Channel {channel_id} does not exist or member {member_id} is not in the channel. Ending lonely state check.")
+            await self.remove_lonely_channel(guild_id, channel_id, cancel_task=False) # タスク自体は完了しているのでキャンセルは不要
+            return
 
-
-async def wait_for_reaction(message_id: int, member_id: int, guild_id: int, channel_id: int):
-    settings = await get_guild_settings(guild_id)
-    wait_seconds = settings["reaction_wait_minutes"] * 60
-
-    try:
-        # 指定された絵文字、ユーザーからのリアクションを待つ
-        def check(reaction, user):
-            return user.id == member_id and str(reaction.emoji) == '✅' and reaction.message.id == message_id
-
-        await utils.bot.wait_for('reaction_add', timeout=wait_seconds, check=check)
-        print(f"メンバー {member_id} がメッセージ {message_id} に反応しました。ミュート処理をキャンセルします。")
-        guild = utils.bot.get_guild(guild_id)
-        if guild and str(guild_id) in utils.server_notification_channels:
-            notification_channel = utils.bot.get_channel(utils.server_notification_channels[str(guild_id)])
+        # チャンネルに一人だけ残っている、または複数人だが最初に一人になったメンバーがまだいる場合
+        logger.info(f"Channel {channel_id} ({guild_id}) remains in a lonely state. Sending sleep check message.")
+        # 寝落ち確認メッセージを送信
+        if notification_channel_id:
+            notification_channel = self.bot.get_channel(notification_channel_id)
             if notification_channel:
-                try:
-                    member = guild.get_member(member_id)
-                    if member:
-                        embed = discord.Embed(title="寝落ちミュート", description=f"{member.mention} さんが反応しました。\nサーバーミュートをキャンセルしました。", color=discord.Color.green())
-                        await notification_channel.send(embed=embed)
-                except discord.Forbidden:
-                    print(f"エラー: チャンネル {notification_channel.name} ({notification_channel.id}) への送信権限がありません。")
-                except Exception as e:
-                    print(f"ミュートキャンセルメッセージ送信中にエラーが発生しました: {e}")
+                lonely_member = guild.get_member(member_id)
+                if lonely_member:
+                    embed = discord.Embed(
+                        title=constants.EMBED_TITLE_SLEEP_CHECK,
+                        description=f"{lonely_member.mention}{constants.EMBED_DESCRIPTION_SLEEP_CHECK.format(channel_name=channel.name)}",
+                        color=constants.EMBED_COLOR_WARNING
+                    )
+                    try:
+                        message = await notification_channel.send(embed=embed)
+                        await message.add_reaction(constants.REACTION_EMOJI_SLEEP_CHECK) # :white_check_mark: 絵文字を追加
+                        logger.info(f"Sent sleep check message to channel {notification_channel_id}. Message ID: {message.id}")
 
+                        # リアクション監視タスクを開始
+                        reaction_task = asyncio.create_task(self.wait_for_reaction(message.id, member_id, guild_id, channel_id, notification_channel_id))
+                        self.sleep_check_messages[message.id] = {"member_id": member_id, "channel_id": channel_id, "task": reaction_task, "notification_channel_id": notification_channel_id}
+                        logger.debug(f"Started reaction monitoring task. Message ID: {message.id}, Channel ID: {channel_id}, Notification Channel ID: {notification_channel_id}")
 
-    except asyncio.TimeoutError:
-        # タイムアウトした場合、ミュート処理を実行
-        print(f"メッセージ {message_id} への反応がありませんでした。メンバー {member_id} をミュートします。")
-        guild = utils.bot.get_guild(guild_id)
-        if guild:
-            member = guild.get_member(member_id)
-            if member:
-                try:
-                    await member.edit(mute=True, deafen=True)
-                    print(f"メンバー {member.display_name} ({member_id}) をミュートしました。")
-                    # ボットがミュートしたメンバーを記録
-                    if member.id not in bot_muted_members:
-                        bot_muted_members.append(member.id)
-
-                    if str(guild_id) in utils.server_notification_channels:
-                        notification_channel = utils.bot.get_channel(utils.server_notification_channels[str(guild_id)])
-                        if notification_channel:
-                            try:
-                                embed = discord.Embed(title="寝落ちミュート", description=f"{member.mention} さんからの反応がなかったため、サーバーミュートしました。\n再入室するとサーバーミュートが解除されます。", color=discord.Color.red())
-                                await notification_channel.send(embed=embed)
-                            except discord.Forbidden:
-                                print(f"エラー: チャンネル {notification_channel.name} ({notification_channel.id}) への送信権限がありません。")
-                            except Exception as e:
-                                print(f"ミュート実行メッセージ送信中にエラーが発生しました: {e}")
-
-                except discord.Forbidden:
-                    print(f"エラー: メンバー {member.display_name} ({member_id}) をミュートする権限がありません。")
-                except Exception as e:
-                    print(f"メンバーミュート中にエラーが発生しました: {e}")
+                    except discord.Forbidden:
+                        logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel_id}).")
+                        # メッセージ送信失敗時も lonely_voice_channels から削除
+                        key = (guild_id, channel_id)
+                        if key in self.lonely_voice_channels:
+                            self.lonely_voice_channels.pop(key)
+                    except Exception as e:
+                        logger.error(f"An error occurred while sending sleep check message: {e}")
+                        # メッセージ送信失敗時も lonely_voice_channels から削除
+                        key = (guild_id, channel_id)
+                        if key in self.lonely_voice_channels:
+                            self.lonely_voice_channels.pop(key)
+                else:
+                     logger.warning(f"Member {member_id} not found. Removing from lonely state management.")
+                     # メンバーが見つからない場合も状態管理から削除
+                     key = (guild_id, channel_id)
+                     if key in self.lonely_voice_channels:
+                        self.lonely_voice_channels.pop(key)
             else:
-                print(f"メンバー {member_id} が見つかりませんでした。")
+                logger.warning(f"Notification channel not found: Guild ID {guild_id}. Removing from lonely state management.")
+                # 通知チャンネルがない場合も状態管理から削除
+                key = (guild_id, channel_id)
+                if key in self.lonely_voice_channels:
+                    self.lonely_voice_channels.pop(key)
         else:
-            print(f"ギルド {guild_id} が見つかりませんでした。")
-
-    finally:
-        # 処理が完了したら、一時的な記録から削除
-        if message_id in sleep_check_messages:
-            sleep_check_messages.pop(message_id)
-        # チャンネルの状態管理からも削除（ミュートされたか反応があったかで一人以下の状態は終了とみなす）
-        key = (guild_id, channel_id)
-        if key in lonely_voice_channels:
-             lonely_voice_channels.pop(key)
+            logger.warning(f"Notification channel not set for guild {guild.name} ({guild_id}). Cannot send sleep check message. Removing from lonely state management.")
+            # 通知チャンネルが設定されていない場合も状態管理から削除
+            key = (guild_id, channel_id)
+            if key in self.lonely_voice_channels:
+                self.lonely_voice_channels.pop(key)
 
 
-async def get_lonely_timeout_seconds(guild_id):
-    settings = await get_guild_settings(guild_id)
-    return settings["lonely_timeout_minutes"] * 60 # 分を秒に変換
+    async def wait_for_reaction(self, message_id: int, member_id: int, guild_id: int, channel_id: int, notification_channel_id: int | None):
+        logger.info(f"Starting reaction monitoring for message {message_id}. Member: {member_id}")
+        settings = await get_guild_settings(guild_id)
+        wait_seconds = settings["reaction_wait_minutes"] * constants.SECONDS_PER_MINUTE
+        logger.debug(f"Configured reaction wait time: {wait_seconds} seconds")
+
+        try:
+            # 指定された絵文字、ユーザーからのリアクションを待つ
+            def check(reaction, user):
+                return user.id == member_id and str(reaction.emoji) == constants.REACTION_EMOJI_SLEEP_CHECK and reaction.message.id == message_id
+
+            await self.bot.wait_for('reaction_add', timeout=wait_seconds, check=check)
+            logger.info(f"Member {member_id} reacted to message {message_id}. Cancelling mute process.")
+            guild = self.bot.get_guild(guild_id)
+            if guild and notification_channel_id:
+                notification_channel = self.bot.get_channel(notification_channel_id)
+                if notification_channel:
+                    try:
+                        member = guild.get_member(member_id)
+                        if member:
+                            embed = discord.Embed(title=constants.EMBED_TITLE_SLEEP_CHECK, description=f"{member.mention}{constants.EMBED_DESCRIPTION_SLEEP_CHECK_CANCEL}", color=constants.EMBED_COLOR_SUCCESS)
+                            await notification_channel.send(embed=embed)
+                            logger.info(f"Sent mute cancellation message to channel {notification_channel.id}.")
+                    except discord.Forbidden:
+                        logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel.id}).")
+                    except Exception as e:
+                        logger.error(f"An error occurred while sending mute cancellation message: {e}")
+
+            # ヘルパー関数を使用してメッセージを削除
+            await self._delete_sleep_check_message(message_id, notification_channel_id)
+
+            # チャンネルの状態管理から削除（再チェックの前に実行）
+            key = (guild_id, channel_id)
+            if key in self.lonely_voice_channels:
+                 self.lonely_voice_channels.pop(key)
+                 logger.debug(f"Removed channel {channel_id} ({guild_id}) from lonely_voice_channels before recheck.")
+
+            # リアクションがありミュートがキャンセルされた後、チャンネルに一人以下のメンバーしかいない場合は再度寝落ちチェックを開始
+            current_channel = guild.get_channel(channel_id)
+            logger.debug(f"Debug: After reaction, current_channel: {current_channel}, members count: {len(current_channel.members) if current_channel else 'N/A'}")
+            if current_channel and len(current_channel.members) <= 1:
+                 key_current = (guild_id, current_channel.id)
+                 # すでにLonely状態のタスクがない場合のみ新規タスクを開始
+                 if key_current not in self.lonely_voice_channels:
+                     logger.debug(f"Channel {current_channel.id} ({guild_id}) has one or fewer members after reaction. Starting sleep check. Member: {member_id}")
+                     notification_channel_id_recheck = config.get_notification_channel_id(guild_id)
+                     task = asyncio.create_task(self.check_lonely_channel(guild_id, current_channel.id, member_id, notification_channel_id_recheck))
+                     self.add_lonely_channel(guild_id, current_channel.id, member_id, task)
+                     logger.info(f"Restarted sleep check for member {member_id} in channel {current_channel.id} after reaction.")
+
+        except asyncio.TimeoutError:
+            # タイムアウトした場合、ミュート処理を実行
+            logger.info(f"No reaction to message {message_id}. Muting member {member_id}.")
+            guild = self.bot.get_guild(guild_id)
+            if guild:
+                member = guild.get_member(member_id)
+                if member:
+                    try:
+                        await member.edit(mute=True, deafen=True)
+                        logger.info(f"Muted member {member.display_name} ({member.id}).")
+                        # ボットがミュートしたメンバーを記録
+                        self.add_bot_muted_member(member.id)
+
+                        if notification_channel_id:
+                            notification_channel = self.bot.get_channel(notification_channel_id)
+                            if notification_channel:
+                                try:
+                                    embed = discord.Embed(title=constants.EMBED_TITLE_SLEEP_CHECK, description=f"{member.mention}{constants.EMBED_DESCRIPTION_SLEEP_CHECK_MUTE}", color=constants.EMBED_COLOR_ERROR)
+                                    await notification_channel.send(embed=embed)
+                                    logger.info(f"Sent mute execution message to channel {notification_channel.id}.")
+                                except discord.Forbidden:
+                                    logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel.id}).")
+                                except Exception as e:
+                                    logger.error(f"An error occurred while sending mute execution message: {e}")
+
+                    except discord.Forbidden:
+                        logger.error(f"Error: No permission to unmute member {member.display_name} ({member.id}).")
+                    except Exception as e:
+                        logger.error(f"An error occurred while unmuting member: {e}")
+                else:
+                    logger.warning(f"Member {member_id} not found.")
+            else:
+                logger.warning(f"Guild {guild_id} not found.")
+
+            # ヘルパー関数を使用してメッセージを削除
+            await self._delete_sleep_check_message(message_id, notification_channel_id)
+
+        finally:
+            # 処理が完了したら、一時的な記録から削除
+            if message_id in self.sleep_check_messages:
+                self.sleep_check_messages.pop(message_id)
+                logger.debug(f"Removed message {message_id} from sleep_check_messages.")
+
+    # get_lonely_timeout_seconds を SleepCheckManager のメソッドとして移動
+    async def _get_lonely_timeout_seconds(self, guild_id):
+        settings = await get_guild_settings(guild_id)
+        return settings[constants.COLUMN_LONELY_TIMEOUT_MINUTES] * constants.SECONDS_PER_MINUTE # 分を秒に変換
+
 
 # --- イベントハンドラ ---
-# @utils.bot.event # デコレータを削除
-async def on_voice_state_update(member, before, after):
-    guild_id = member.guild.id
-    now = datetime.datetime.now(datetime.timezone.utc)
 
-    # 対象チャンネル（入室または退室対象）
-    channel_before = before.channel
-    channel_after = after.channel
+class VoiceEvents(commands.Cog):
+    # コンストラクタで分解された各マネージャーのインスタンスを受け取る
+    def __init__(self, bot, sleep_check_manager: SleepCheckManager, voice_state_manager: VoiceStateManager):
+        self.bot = bot
+        self.sleep_check_manager = sleep_check_manager
+        self.voice_state_manager = voice_state_manager # VoiceStateManager は調整役として残す
+        logger.info("VoiceEvents Cog initialized.")
 
-    # 一人以下になった場合の処理
-    # チャンネルから退出して一人になった場合、または最初から一人で通話に参加した場合
-    if (channel_before is not None and len(channel_before.members) == 1) or \
-       (channel_before is None and channel_after is not None and len(channel_after.members) == 1):
-        target_channel = channel_before if channel_before is not None else channel_after
-        lonely_member = target_channel.members[0]
-        key = (guild_id, target_channel.id)
-        if key not in lonely_voice_channels: # 既に一人以下の状態として記録されていない場合のみ
-            lonely_voice_channels[key] = {
-                "start_time": now,
-                "member_id": lonely_member.id,
-                "task": asyncio.create_task(check_lonely_channel(guild_id, target_channel.id, lonely_member.id)) # タイマー開始
-            }
-            print(f"チャンネル {target_channel.name} ({target_channel.id}) が一人以下になりました。メンバー: {lonely_member.display_name}")
+    # --- 10時間達成通知用ヘルパー関数 ---
+    async def _check_and_notify_milestone(self, member: discord.Member, guild: discord.Guild, before_total: float, after_total: float, notification_channel_id: int | None):
+        logger.info(f"Checking for milestone notification. Member: {member.id}, Guild: {guild.id}, Before: {before_total}, After: {after_total}")
+        guild_id = str(guild.id)
 
-    # 一人以下の状態から複数人になった場合の処理、またはチャンネルから全員退出した場合
-    if channel_after is not None and len(channel_after.members) > 1:
-        key = (guild_id, channel_after.id)
-        if key in lonely_voice_channels:
-            # タイマーをキャンセル
-            lonely_voice_channels[key]["task"].cancel()
-            lonely_voice_channels.pop(key)
-            print(f"チャンネル {channel_after.name} ({channel_after.id}) が複数人になりました。一人以下の状態を解除し、タイマーをキャンセルしました。")
-    elif channel_before is not None and len(channel_before.members) == 0:
-         key = (guild_id, channel_before.id)
-         if key in lonely_voice_channels:
-            # タイマーをキャンセル
-            lonely_voice_channels[key]["task"].cancel()
-            lonely_voice_channels.pop(key)
-            print(f"チャンネル {channel_before.name} ({channel_before.id}) から全員退出しました。一人以下の状態を解除し、タイマーをキャンセルしました。")
+        if notification_channel_id is None:
+            logger.debug(f"Notification channel not set for guild {guild_id}. Skipping milestone notification.")
+            return # 通知先チャンネルが設定されていない場合は何もしない
 
+        notification_channel = self.bot.get_channel(notification_channel_id)
+        if not notification_channel:
+            logger.warning(f"Notification channel not found: Guild ID {guild_id}, Channel ID {notification_channel_id}")
+            return
 
-    # 同一チャンネル内での状態変化の場合は何もしない
-    if channel_before == channel_after:
-        return
+        hour_threshold = constants.MILESTONE_THRESHOLD_SECONDS
+        before_milestone = int(before_total // hour_threshold)
+        after_milestone = int(after_total // hour_threshold)
+        logger.debug(f"Before milestone: {before_milestone}, After milestone: {after_milestone}")
 
-    # 通話通知機能
-    if before.channel is None and after.channel is not None:
-        voice_channel_id = after.channel.id
-        if guild_id not in utils.call_sessions:
-            utils.call_sessions[guild_id] = {}
-        if voice_channel_id not in utils.call_sessions[guild_id]:
-            start_time = now
-            utils.call_sessions[guild_id][voice_channel_id] = {"start_time": start_time, "first_member": member.id}
-            jst_time = utils.convert_utc_to_jst(start_time)
-            embed = discord.Embed(title="通話開始", color=0xE74C3C)
-            embed.set_thumbnail(url=f"{member.avatar.url}?size=128")
-            embed.add_field(name="チャンネル", value=f"{after.channel.name}")
-            embed.add_field(name="始めた人", value=f"{member.display_name}")
-            embed.add_field(name="開始時間", value=f"{jst_time.strftime('%Y/%m/%d %H:%M:%S')}")
-            if str(guild_id) in utils.server_notification_channels:
-                notification_channel = utils.bot.get_channel(utils.server_notification_channels[str(guild_id)])
-                if notification_channel:
-                    await notification_channel.send(content="@everyone", embed=embed, allowed_mentions=discord.AllowedMentions(everyone=True))
-                else:
-                    print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
+        if after_milestone > before_milestone:
+            achieved_hours = after_milestone * 10 # 10時間ごとのマイルストーンなので 10 を乗算
+            logger.info(f"Member {member.id} achieved {achieved_hours} hour milestone.")
+            embed = discord.Embed(
+                title=constants.EMBED_TITLE_MILESTONE,
+                description=constants.EMBED_DESCRIPTION_MILESTONE.format(member=member, achieved_hours=achieved_hours),
+                color=constants.EMBED_COLOR_MILESTONE
+            )
+            embed.set_thumbnail(url=member.display_avatar.url)
+            embed.add_field(name=constants.EMBED_FIELD_MEMBER, value=member.display_name, inline=True)
+            embed.add_field(name=constants.EMBED_FIELD_ACHIEVED_TIME, value=f"{achieved_hours} 時間", inline=True)
+            embed.add_field(name=constants.EMBED_FIELD_CURRENT_TOTAL, value=formatters.format_duration(after_total), inline=False) # Use imported formatters
+            embed.timestamp = datetime.datetime.now(constants.TIMEZONE_JST)
+
+            try:
+                await notification_channel.send(embed=embed)
+                logger.info(f"Sent milestone notification to channel {notification_channel_id}.")
+            except discord.Forbidden:
+                logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel_id}).")
+            except Exception as e:
+                logger.error(f"An error occurred while sending notification: {e}")
+        else:
+            logger.debug("No milestone achieved.")
+
+    # チャンネルに入室した場合の処理
+    async def _handle_join(self, member, channel_after):
+        logger.info(f"Member {member.id} joined channel {channel_after.id} ({channel_after.name}).")
+        guild_id = member.guild.id
+        key_after = (guild_id, channel_after.id)
+
+        # 入室したチャンネルが一人以下になった場合、そのメンバーに対して一人以下の状態を開始
+        if len(channel_after.members) == 1:
+            lonely_member = channel_after.members[0]
+            if key_after not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
+                logger.debug(f"Channel {channel_after.id} ({guild_id}) has one or fewer members. Starting sleep check. Member: {lonely_member.id}")
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id, notification_channel_id))
+                self.sleep_check_manager.add_lonely_channel(guild_id, channel_after.id, lonely_member.id, task)
+        # 入室したチャンネルが複数人になった場合、一人以下の状態を解除
+        elif len(channel_after.members) > 1:
+            if key_after in self.sleep_check_manager.lonely_voice_channels:
+                logger.debug(f"Multiple members joined channel {channel_after.id} ({guild_id}). Removing lonely state.")
+                # lonely_voice_channels から削除される前にメッセージIDを取得
+                lonely_member_id = self.sleep_check_manager.lonely_voice_channels[key_after]["member_id"]
+                await self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
+
+                # 関連付けられたメッセージを削除
+                message_ids_to_remove = []
+                for message_id, data in self.sleep_check_manager.sleep_check_messages.items():
+                    if data.get("channel_id") == channel_after.id and data.get("member_id") == lonely_member_id:
+                        message_ids_to_remove.append(message_id)
+
+                for message_id in message_ids_to_remove:
+                    notification_channel_id = self.sleep_check_manager.sleep_check_messages[message_id].get("notification_channel_id")
+                    await self.sleep_check_manager._delete_sleep_check_message(message_id, notification_channel_id)
+                    # sleep_check_messages からの削除は wait_for_reaction の finally で行われるため、ここでは不要
+                    logger.debug(f"Message {message_id} deletion requested due to multiple members joining.")
+
+        # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
+        ended_sessions_data = await self.voice_state_manager.notify_member_joined(member, channel_after)
+        logger.debug(f"VoiceStateManager.notify_member_joined processing complete. Member: {member.id}, Channel: {channel_after.id}. Ended sessions count: {len(ended_sessions_data)}")
+
+        # VoiceStateManager から統計更新が必要なデータが返された場合、処理関数に委譲
+        if ended_sessions_data:
+            await self._process_session_end_data(member.guild, ended_sessions_data)
 
         # ボットによってミュートされたメンバーが再入室した場合、ミュートを解除
-        if member.id in bot_muted_members:
+        if member.id in self.sleep_check_manager.bot_muted_members:
+            logger.info(f"Bot-muted member {member.id} rejoined. Scheduling unmute.")
             async def unmute_after_delay(m: discord.Member):
-                await asyncio.sleep(1) # 1秒待機
+                logger.debug(f"Starting delayed unmute process for member {m.id}.")
+                # チャンネルの状態変化が完全に反映されるのを待つため、少し遅延させる
+                await asyncio.sleep(constants.UNMUTE_DELAY_SECONDS)
                 try:
                     await m.edit(mute=False, deafen=False)
-                    if m.id in bot_muted_members:
-                        bot_muted_members.remove(m.id)
-                    print(f"メンバー {m.display_name} ({m.id}) が再入室したためミュートを解除しました。")
+                    self.sleep_check_manager.remove_bot_muted_member(m.id)
+                    logger.info(f"Unmuted member {m.display_name} ({m.id}) due to rejoining.")
 
-                    if str(m.guild.id) in utils.server_notification_channels:
-                        notification_channel = utils.bot.get_channel(utils.server_notification_channels[str(m.guild.id)])
+                    notification_channel_id = config.get_notification_channel_id(m.guild.id)
+                    if notification_channel_id:
+                        notification_channel = self.bot.get_channel(notification_channel_id)
                         if notification_channel:
                             try:
-                                embed = discord.Embed(title="寝落ちミュート", description=f"{m.mention} さんが再入室したため、サーバーミュートを解除しました。", color=discord.Color.green())
+                                embed = discord.Embed(title=constants.EMBED_TITLE_SLEEP_CHECK, description=f"{m.mention}{constants.EMBED_DESCRIPTION_UNMUTE_ON_REJOIN}", color=constants.EMBED_COLOR_SUCCESS)
                                 await notification_channel.send(embed=embed)
+                                logger.info(f"Sent unmute on rejoin message to channel {notification_channel.id}.")
                             except discord.Forbidden:
-                                print(f"エラー: チャンネル {notification_channel.name} ({notification_channel.id}) への送信権限がありません。")
+                                logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel.id}).")
                             except Exception as e:
-                                print(f"再入室時ミュート解除メッセージ送信中にエラーが発生しました: {e}")
+                                logger.error(f"An error occurred while sending unmute on rejoin message: {e}")
+
+                    # ミュート解除後、チャンネルに一人以下であれば再度寝落ちチェックを開始
+                    current_channel = m.voice.channel
+                    if current_channel and len(current_channel.members) <= 1:
+                         key_current = (m.guild.id, current_channel.id)
+                         # すでにLonely状態のタスクがない場合のみ新規タスクを開始
+                         if key_current not in self.sleep_check_manager.lonely_voice_channels:
+                             logger.debug(f"Channel {current_channel.id} ({m.guild.id}) has one or fewer members after unmute. Starting sleep check. Member: {m.id}")
+                             notification_channel_id_recheck = config.get_notification_channel_id(m.guild.id)
+                             task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(m.guild.id, current_channel.id, m.id, notification_channel_id_recheck))
+                             self.sleep_check_manager.add_lonely_channel(m.guild.id, current_channel.id, m.id, task)
+                             logger.info(f"Restarted sleep check for member {m.id} in channel {current_channel.id}.")
 
                 except discord.Forbidden:
-                    print(f"エラー: メンバー {m.display_name} ({m.id}) のミュートを解除する権限がありません。")
+                    logger.error(f"Error: No permission to unmute member {m.display_name} ({m.id}).")
                 except Exception as e:
-                    print(f"メンバーミュート解除中にエラーが発生しました: {e}")
+                    logger.error(f"An error occurred while unmuting member: {e}")
+                logger.debug(f"Delayed unmute process for member {m.id} completed.")
 
             asyncio.create_task(unmute_after_delay(member))
 
-    elif before.channel is not None and after.channel is None:
-        voice_channel_id = before.channel.id
-        if guild_id in utils.call_sessions and voice_channel_id in utils.call_sessions[guild_id]:
-            voice_channel = before.channel
-            if len(voice_channel.members) == 0:
-                session = utils.call_sessions[guild_id].pop(voice_channel_id)
-                start_time = session["start_time"]
-                call_duration = (now - start_time).total_seconds()
-                duration_str = utils.format_duration(call_duration)
-                embed = discord.Embed(title="通話終了", color=0x5865F2)
-                embed.add_field(name="チャンネル", value=f"{voice_channel.name}")
-                embed.add_field(name="通話時間", value=f"{duration_str}")
-                if str(guild_id) in utils.server_notification_channels:
-                    notification_channel = utils.bot.get_channel(utils.server_notification_channels[str(guild_id)])
-                    if notification_channel:
-                        await notification_channel.send(embed=embed)
-                    else:
-                        print(f"通知チャンネルが見つかりません: ギルドID {guild_id}")
+    # チャンネルから退出した場合の処理
+    async def _handle_leave(self, member, channel_before):
+        logger.info(f"Member {member.id} left channel {channel_before.id} ({channel_before.name}).")
+        guild_id = member.guild.id
+        key_before = (guild_id, channel_before.id)
 
-    # --- 2人以上通話状態の記録（各メンバーごとに個別記録＋全参加者リストを維持する処理） ---
+        # 退室したメンバーに関連付けられた寝落ち確認タスクがあればキャンセルし、メッセージを削除
+        message_ids_to_remove = []
+        for message_id, data in self.sleep_check_manager.sleep_check_messages.items():
+            # 退室したメンバーに関連付けられたリアクション監視タスクをキャンセル
+            if data.get("member_id") == member.id:
+                if data["task"] and not data["task"].cancelled():
+                    data["task"].cancel()
+                    logger.info(f"Cancelled reaction monitoring task for message {message_id} due to member {member.id} leaving.")
+                message_ids_to_remove.append(message_id)
 
-    # 退室処理（before.channel から退出した場合）
-    if channel_before is not None:
-        key = (guild_id, channel_before.id)
-        if key in utils.active_voice_sessions:
-            session_data = utils.active_voice_sessions[key]
-            # もし対象メンバーが在室中ならその個人分の退室処理を実施
-            if member.id in session_data["current_members"]:
-                join_time = session_data["current_members"].pop(member.id)
-                duration = (now - join_time).total_seconds()
+        for message_id in message_ids_to_remove:
+            # ヘルパー関数を使用してメッセージを削除
+            notification_channel_id = self.sleep_check_manager.sleep_check_messages[message_id].get("notification_channel_id")
+            await self.sleep_check_manager._delete_sleep_check_message(message_id, notification_channel_id)
 
-                # --- 10時間達成チェック ---
-                before_total = await get_total_call_time(member.id)
-                month_key = join_time.strftime("%Y-%m")
-                await update_member_monthly_stats(month_key, member.id, duration)
-                after_total = await get_total_call_time(member.id)
-                await utils.check_and_notify_milestone(member, member.guild, before_total, after_total)
-                # --- ここまで ---
+            # sleep_check_messages からの削除は wait_for_reaction の finally で行われるため、ここでは不要
+            logger.debug(f"Message {message_id} deletion requested due to member move.")
 
-            # もし退室後、チャンネル内人数が1人以下ならセッション終了処理を実施
-            if channel_before is not None and len(channel_before.members) < 2:
-                # セッション終了時の残メンバーの統計更新と通知チェック
-                remaining_members_data = session_data["current_members"].copy()
-                for m_id, join_time in remaining_members_data.items():
-                    d = (now - join_time).total_seconds()
+        # 退室したチャンネルに誰もいなくなった場合、一人以下の状態を解除
+        if channel_before is not None and len(channel_before.members) == 0:
+            if key_before in self.sleep_check_manager.lonely_voice_channels:
+                logger.debug(f"Channel {channel_before.id} ({guild_id}) is empty. Removing lonely state.")
+                await self.sleep_check_manager.remove_lonely_channel(guild_id, channel_before.id)
+        # 退室したチャンネルに一人だけ残った場合、そのメンバーに対して一人以下の状態を開始
+        elif channel_before is not None and len(channel_before.members) == 1:
+            lonely_member = channel_before.members[0]
+            if key_before not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
+                logger.debug(f"Only one member left in channel {channel_before.id} ({guild_id}). Starting sleep check. Member: {lonely_member.id}")
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_before.id, lonely_member.id, notification_channel_id))
+                self.sleep_check_manager.add_lonely_channel(guild_id, channel_before.id, lonely_member.id, task)
 
-                    # --- 10時間達成チェック (セッション終了時) ---
-                    m_obj = member.guild.get_member(m_id)
-                    if m_obj:
-                        before_total_sess_end = await get_total_call_time(m_id)
-                        month_key = join_time.strftime("%Y-%m")
-                        await update_member_monthly_stats(month_key, m_id, d)
-                        after_total_sess_end = await get_total_call_time(m_id)
-                        await utils.check_and_notify_milestone(m_obj, member.guild, before_total_sess_end, after_total_sess_end)
-                    else:
-                         month_key = join_time.strftime("%Y-%m")
-                         await update_member_monthly_stats(month_key, m_id, d)
-                    # --- ここまで ---
+        # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
+        ended_sessions_data = await self.voice_state_manager.notify_member_left(member, channel_before)
+        logger.debug(f"VoiceStateManager.notify_member_left processing complete. Member: {member.id}, Channel: {channel_before.id}. Ended sessions count: {len(ended_sessions_data)}")
+        # VoiceStateManager から統計更新が必要なデータが返された場合、処理関数に委譲
+        if ended_sessions_data:
+            await self._process_session_end_data(member.guild, ended_sessions_data)
 
-                    session_data["current_members"].pop(m_id)
+    async def _process_session_end_data(self, guild: discord.Guild, ended_sessions_data: list):
+        """
+        VoiceStateManagerから返された終了した個別のメンバーセッションデータを処理し、
+        統計更新とマイルストーン通知を行います。
 
-                overall_duration = (now - session_data["session_start"]).total_seconds()
-                await record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
-                utils.active_voice_sessions.pop(key, None)
-
-                # チャンネルの人数が1人以下になったら active_status_channels から削除
-                if channel_before is not None and len(channel_before.members) < 2:
-                    utils.active_status_channels.discard(key)
-                    # 2人以上の通話がすべて終了した場合、ステータス更新タスクを停止しステータスをクリア
-                    if not utils.active_status_channels and utils.update_call_status_task.is_running():
-                        utils.update_call_status_task.stop()
-                        await utils.bot.change_presence(activity=None)
-
-
-    # 入室処理（after.channelに入室した場合）
-    if channel_after is not None:
-        key = (guild_id, channel_after.id)
-        # チャンネル内の人数が2人以上の場合
-        if len(channel_after.members) >= 2:
-            if key not in utils.active_voice_sessions:
-                # セッション開始時刻は、通話が2人以上になった時刻（この時点の now）
-                utils.active_voice_sessions[key] = {
-                    "session_start": now,
-                    "current_members": { m.id: now for m in channel_after.members },
-                    "all_participants": set(m.id for m in channel_after.members)
-                }
+        TODO: データベース操作におけるエラーハンドリング（try...except）を追加検討
+        現在の実装では、データベース操作中にエラーが発生した場合、例外が捕捉されず、
+        予期しない動作やボットのクラッシュにつながる可能性があります。
+        """
+        logger.info(f"Starting processing of ended session data for guild {guild.id}. Data count: {len(ended_sessions_data)}")
+        for member_id, duration, join_time in ended_sessions_data:
+            logger.debug(f"Processing session end data for member {member_id}. Duration: {duration}, Join time: {join_time}")
+            # データベース操作: メンバーの合計通話時間を取得 (更新前の値)
+            # TODO: get_total_call_time のエラーハンドリングを追加検討
+            before_total = await get_total_call_time(member_id)
+            month_key = join_time.strftime("%Y-%m")
+            # データベース操作: メンバーの月間統計を更新し、更新後の合計通話時間を取得
+            # TODO: update_member_monthly_stats のエラーハンドリングを追加検討
+            after_total = await update_member_monthly_stats(month_key, member_id, duration)
+            logger.debug(f"Updated monthly stats for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
+            m_obj = guild.get_member(member_id)
+            if m_obj:
+                notification_channel_id = config.get_notification_channel_id(guild.id) # config から取得
+                await self._check_and_notify_milestone(m_obj, guild, before_total, after_total, notification_channel_id)
             else:
-                # 既存のセッションがある場合、新たに入室したメンバーを更新する
-                session_data = utils.active_voice_sessions[key]
-                for m in channel_after.members:
-                    if m.id not in session_data["current_members"]:
-                        session_data["current_members"][m.id] = now
-                    session_data["all_participants"].add(m.id)
+                logger.warning(f"Member {member_id} not found in guild {guild.id}. Cannot check/notify milestone.")
+        logger.info(f"Finished processing of ended session data for guild {guild.id}.")
 
-            # チャンネルの人数が2人以上になったら active_status_channels に追加
-            if key not in utils.active_status_channels:
-                utils.active_status_channels.add(key)
-                # 初めて2人以上の通話が始まった場合、ステータス更新タスクを開始
-                if not utils.update_call_status_task.is_running():
-                    utils.update_call_status_task.start()
 
-        else:
-            # 人数が2人未満の場合は、既にセッションが存在する場合のみ更新する
-            if key in utils.active_voice_sessions:
-                session_data = utils.active_voice_sessions[key]
-                for m in channel_after.members:
-                    if m.id not in session_data["current_members"]:
-                        session_data["current_members"][m.id] = now
-                    session_data["all_participants"].add(m.id)
+    # 移動元チャンネルからメンバーが退出した際の処理（移動用）
+    async def _process_member_leave_for_move(self, member, channel_before):
+        logger.debug(f"[_process_member_leave_for_move] Member {member.id} leaving channel {channel_before.id}.")
+        guild_id = member.guild.id
+        key_before = (guild_id, channel_before.id)
+
+        # 移動元チャンネルに誰もいなくなった場合、一人以下の状態を解除
+        if len(channel_before.members) == 0:
+            if key_before in self.sleep_check_manager.lonely_voice_channels:
+                logger.debug(f"Source channel {channel_before.id} ({guild_id}) is empty. Removing lonely state.")
+                await self.sleep_check_manager.remove_lonely_channel(guild_id, channel_before.id)
+        # 移動元チャンネルに一人だけ残った場合、そのメンバーに対して一人以下の状態を開始
+        elif len(channel_before.members) == 1:
+            lonely_member = channel_before.members[0]
+            if key_before not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
+                logger.debug(f"Only one member left in source channel {channel_before.id} ({guild_id}). Starting sleep check. Member: {lonely_member.id}")
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_before.id, lonely_member.id, notification_channel_id))
+                self.sleep_check_manager.add_lonely_channel(guild_id, channel_before.id, lonely_member.id, task)
+        logger.debug(f"Finished processing leave part for member {member.id} moving from channel {channel_before.id}.")
+
+    # 移動先チャンネルにメンバーが入室した際の処理（移動用）
+    async def _process_member_join_for_move(self, member, channel_after):
+        logger.debug(f"[_process_member_join_for_move] Member {member.id} joining channel {channel_after.id}.")
+        guild_id = member.guild.id
+        key_after = (guild_id, channel_after.id)
+
+        # 移動先チャンネルの状態に応じてLonely状態のチェックを開始/停止
+        # 入室したチャンネルが一人以下になった場合、そのメンバーに対して一人以下の状態を開始
+        if len(channel_after.members) == 1:
+            lonely_member = channel_after.members[0]
+            if key_after not in self.sleep_check_manager.lonely_voice_channels and lonely_member.id not in self.sleep_check_manager.bot_muted_members:
+                logger.debug(f"Channel {channel_after.id} ({guild_id}) has one or fewer members. Starting sleep check. Member: {lonely_member.id}")
+                notification_channel_id = config.get_notification_channel_id(guild_id) # config から取得
+                task = asyncio.create_task(self.sleep_check_manager.check_lonely_channel(guild_id, channel_after.id, lonely_member.id, notification_channel_id))
+                self.sleep_check_manager.add_lonely_channel(guild_id, channel_after.id, lonely_member.id, task)
+        # 入室したチャンネルが複数人になった場合、一人以下の状態を解除
+        elif len(channel_after.members) > 1:
+            if key_after in self.sleep_check_manager.lonely_voice_channels:
+                logger.debug(f"Multiple members joined channel {channel_after.id} ({guild_id}). Removing lonely state.")
+                await self.sleep_check_manager.remove_lonely_channel(guild_id, channel_after.id)
+
+        logger.debug(f"Finished processing join part for member {member.id} moving to channel {channel_after.id}.")
+
+
+    # チャンネル間を移動した場合の処理
+    async def _handle_move(self, member, channel_before, channel_after):
+        logger.info(f"Member {member.id} moved from channel {channel_before.id} ({channel_before.name}) to channel {channel_after.id} ({channel_after.name}).")
+        guild_id = member.guild.id
+        key_before = (guild_id, channel_before.id)
+
+        # 移動元のチャンネルに関連付けられた寝落ち確認タスクがあればキャンセルし、メッセージを削除
+        message_ids_to_remove = []
+        for message_id, data in self.sleep_check_manager.sleep_check_messages.items():
+            # 移動したメンバーに関連付けられたリアクション監視タスクをキャンセル
+            if data.get("member_id") == member.id:
+                if data["task"] and not data["task"].cancelled():
+                    data["task"].cancel()
+                    logger.info(f"Cancelled reaction monitoring task for message {message_id} due to member {member.id} moving.")
+                message_ids_to_remove.append(message_id)
+
+        for message_id in message_ids_to_remove:
+            # ヘルパー関数を使用してメッセージを削除
+            notification_channel_id = self.sleep_check_manager.sleep_check_messages[message_id].get("notification_channel_id")
+            await self.sleep_check_manager._delete_sleep_check_message(message_id, notification_channel_id)
+
+            # sleep_check_messages からの削除は wait_for_reaction の finally で行われるため、ここでは不要
+            logger.debug(f"Message {message_id} deletion requested due to member move.")
+
+        # 移動元のチャンネルの一人以下の状態を解除
+        if key_before in self.sleep_check_manager.lonely_voice_channels:
+            logger.debug(f"Member {member.id} moved. Removing lonely state for source channel {channel_before.id} ({guild_id}).")
+            await self.sleep_check_manager.remove_lonely_channel(guild_id, channel_before.id)
+
+        # 移動元チャンネルの退出処理
+        await self._process_member_leave_for_move(member, channel_before)
+
+        # 移動先チャンネルの入室処理
+        await self._process_member_join_for_move(member, channel_after)
+
+        # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
+        ended_sessions_from_before, joined_session_data = await self.voice_state_manager.notify_member_moved(member, channel_before, channel_after)
+        logger.debug(f"VoiceStateManager.notify_member_moved processing complete. Member: {member.id}, Source: {channel_before.id}, Destination: {channel_after.id}. Ended sessions count: {len(ended_sessions_from_before)}, Joined session data: {joined_session_data is not None}")
+
+        # 移動元での退出による統計更新とマイルストーン通知
+        if ended_sessions_from_before:
+            await self._process_session_end_data(member.guild, ended_sessions_from_before)
+
+        # 移動先での入室による統計更新とマイルストーン通知 (移動してきたメンバー自身の場合のみ)
+        # 移動直後は通話時間0として記録（新しいセッションの開始）
+        if joined_session_data is not None:
+             member_id_join, duration_join, join_time_join = joined_session_data
+             logger.debug(f"Starting stats update process due to joining destination channel. Member: {member_id_join}, Duration: {duration_join}, Join time: {join_time_join}")
+             # 移動直後は通話時間0として記録（新しいセッションの開始）
+             # _process_session_end_data と同様のロジックを適用しつつ、duration を 0 とする
+             before_total_join = await get_total_call_time(member_id_join)
+             month_key_join = join_time_join.strftime("%Y-%m")
+             await update_member_monthly_stats(month_key_join, member_id_join, 0) # duration は 0
+             after_total_join = await get_total_call_time(member_id_join)
+             logger.debug(f"Updated monthly stats for member {member_id_join}. Before Total: {before_total_join}, After Total: {after_total_join}")
+             m_obj_join = member.guild.get_member(member_id_join) if member.guild else None
+             if m_obj_join:
+                 notification_channel_id = config.get_notification_channel_id(member.guild.id) # config から取得
+                 await self._check_and_notify_milestone(m_obj_join, member.guild, before_total_join, after_total_join, notification_channel_id)
+
+
+        # ボットによってミュートされたメンバーがチャンネル移動した場合、ミュートを解除
+        if member.id in self.sleep_check_manager.bot_muted_members:
+            logger.info(f"Bot-muted member {member.id} moved channels. Scheduling unmute.")
+            async def unmute_after_delay(m: discord.Member):
+                logger.debug(f"Starting delayed unmute process for member {m.id}.")
+                await asyncio.sleep(constants.UNMUTE_DELAY_SECONDS) # 1秒待機
+                try:
+                    await m.edit(mute=False, deafen=False)
+                    self.sleep_check_manager.remove_bot_muted_member(m.id)
+                    logger.info(f"Unmuted member {m.display_name} ({m.id}) due to channel move.")
+
+                    notification_channel_id = config.get_notification_channel_id(m.guild.id)
+                    if notification_channel_id:
+                        notification_channel = self.bot.get_channel(notification_channel_id)
+                        if notification_channel:
+                            try:
+                                embed = discord.Embed(title=constants.EMBED_TITLE_SLEEP_CHECK, description=f"{m.mention}{constants.EMBED_DESCRIPTION_UNMUTE_ON_REJOIN}", color=constants.EMBED_COLOR_SUCCESS)
+                                await notification_channel.send(embed=embed)
+                                logger.info(f"Sent unmute on channel move message to channel {notification_channel.id}.")
+                            except discord.Forbidden:
+                                logger.error(f"Error: No permission to send messages to channel {notification_channel.name} ({notification_channel.id}).")
+                            except Exception as e:
+                                logger.error(f"An error occurred while sending unmute on channel move message: {e}")
+
+                except discord.Forbidden:
+                    logger.error(f"Error: No permission to unmute member {m.display_name} ({m.id}).")
+                except Exception as e:
+                    logger.error(f"An error occurred while unmuting member: {e}")
+                logger.debug(f"Delayed unmute process for member {m.id} completed.")
+
+            asyncio.create_task(unmute_after_delay(member))
+
+    # 同一チャンネル内での状態変化（ミュート、デフなど）の処理
+    async def _handle_state_change(self, member, before, after):
+        logger.debug(f"Detected state change for member {member.id} within the same channel. Channel: {before.channel.id}")
+        # このメソッドは、同一チャンネル内でのミュート、デフ、ストリーム開始/終了などの状態変化を処理するために存在します。
+        # 現在の要件ではこれらの状態変化に対して特別なアクションは必要ないため、passしています。
+        # 将来的にこれらの状態変化に対応する機能を追加する場合に、このメソッド内にロジックを記述します。
+        pass
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member, before, after):
+        logger.info(f"on_voice_state_update event occurred: Member {member.id}, Before: {before.channel}, After: {after.channel}")
+        channel_before = before.channel
+        channel_after = after.channel
+
+        if channel_before is None and channel_after is not None:
+            # チャンネルに入室した場合
+            await self._handle_join(member, channel_after)
+        elif channel_before is not None and channel_after is None:
+            # チャンネルから退出した場合
+            await self._handle_leave(member, channel_before)
+        elif channel_before is not None and channel_after is not None and channel_before != channel_after:
+            # チャンネル間を移動した場合
+            await self._handle_move(member, channel_before, channel_after)
+        elif channel_before is not None and channel_after is not None and channel_before == channel_after:
+            # 同一チャンネル内での状態変化
+            await self._handle_state_change(member, before, after)
+
+        pass

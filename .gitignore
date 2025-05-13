@@ -9,3 +9,6 @@ voice_stats.db
 venv/
 backups/
 __pycache__/
+review_results/
+task/
+archive/

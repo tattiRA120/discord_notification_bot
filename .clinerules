@@ -3,27 +3,38 @@
 
 # Describe the main purpose of each file.
 [file: main.py]
-役割: Discordボットのメインエントリーポイント。ボットの起動、イベントループの管理、および他のモジュールのロードを行います。
+Role: The main entry point of the Discord bot. It handles bot startup, database initialization, Cog loading, task starting, and slash command registration/synchronization.
 
 [file: commands.py]
-役割: Discordスラッシュコマンドの定義とそれに対応する処理を記述します。ユーザーからのコマンド入力を受け付け、適切な処理を実行します。
+Role: Defines Discord slash commands and their corresponding processing, including fetching and displaying statistics and managing guild settings.
 
 [file: tasks.py]
-役割: 定期的に実行されるタスク（例: 統計情報の自動送信）を定義します。discord.ext.tasks を使用したタスクループが含まれます。
+Role: Defines periodic tasks using discord.ext.tasks, such as sending monthly and annual statistics.
 
 [file: voice_events.py]
-役割: 音声チャンネルに関連するイベント（参加、退出、ミュートなど）のハンドラを定義します。通話時間の記録や寝落ち確認機能などのロジックが含まれます。
+Role: Defines handlers for voice channel related events (join, leave, move, state changes). Includes logic for sleep checking, automatic muting, and call time milestone notifications.
 
 [file: database.py]
-役割: SQLiteデータベースへのアクセスと操作（接続、クエリ実行、データの保存・取得）を行う関数を定義します。他のファイルはこのモジュールを介してデータベースとやり取りします。
+Role: Provides asynchronous functions for accessing and manipulating the SQLite database, managing data for voice sessions, participants, monthly statistics, and guild settings.
 
-[file: utils.py]
-役割: 一般的なユーティリティ関数やヘルパー関数をまとめます。
+[file: config.py]
+Role: Manages bot configuration, specifically saving, loading, and accessing notification channel IDs per guild.
+
+[file: formatters.py]
+Role: Contains utility functions for formatting data, such as converting seconds to HH:MM:SS format and converting UTC time to JST.
+
+[file: voice_state_manager.py]
+Role: Coordinates voice channel state changes and delegates processing to specialized components: CallNotificationManager, StatisticalSessionManager, and BotStatusUpdater.
+
+[file: backup_db.py]
+Role: Handles the SQLite database backup process, including creating backup files and managing retention.
+
+[file: constants.py]
+Role: Defines constant values used throughout the bot for various purposes including time, database, milestones, backup, tasks, logging, bot settings, embeds, messages, fields, voice states, reactions, mentions, and configuration.
 
 # You can also add more specific rules or information, e.g.,
 # [rule: Avoid direct database access outside of database.py]
-# データベース操作はdatabase.py内の関数を介して行うべきです。
+# Database operations should be performed through functions within database.py.
 
 # [rule: Command logic should reside in commands.py]
-# スラッシュコマンドの処理ロジックはcommands.pyに記述し、main.pyからは呼び出すだけに留めるべきです。
-
+# Slash command processing logic should be written in commands.py, and only called from main.py.
