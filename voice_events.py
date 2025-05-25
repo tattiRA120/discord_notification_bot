@@ -467,17 +467,50 @@ class VoiceEvents(commands.Cog):
         logger.info(f"Starting processing of ended session data for guild {guild.id}. Data count: {len(ended_sessions_data)}")
         for member_id, duration, join_time in ended_sessions_data:
             logger.debug(f"Processing session end data for member {member_id}. Duration: {duration}, Join time: {join_time}")
-            # データベース操作: メンバーの合計通話時間を取得 (更新前の値)
-            # TODO: get_total_call_time のエラーハンドリングを追加検討
-            before_total = await get_total_call_time(member_id)
+            before_total = constants.DEFAULT_TOTAL_DURATION # エラー時のデフォルト値
+            after_total = constants.DEFAULT_TOTAL_DURATION # エラー時のデフォルト値
             month_key = join_time.strftime("%Y-%m")
-            # データベース操作: メンバーの月間統計を更新し、更新後の合計通話時間を取得
-            # TODO: update_member_monthly_stats のエラーハンドリングを追加検討
-            after_total = await update_member_monthly_stats(month_key, member_id, duration)
-            logger.debug(f"Updated monthly stats for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
+
+            try:
+                # データベース操作: メンバーの合計通話時間を取得 (更新前の値)
+                before_total = await get_total_call_time(member_id)
+                logger.debug(f"Fetched before_total for member {member_id}: {before_total}")
+            except Exception as e:
+                logger.error(f"An error occurred while fetching total call time for member {member_id} in _process_session_end_data: {e}")
+                # エラーが発生しても処理は続行
+
+            try:
+                # データベース操作: メンバーの月間統計を更新し、更新後の合計通話時間を取得
+                after_total = await update_member_monthly_stats(month_key, member_id, duration)
+                logger.debug(f"Updated monthly stats for member {member_id}. New total: {after_total}")
+            except Exception as e:
+                logger.error(f"An error occurred while updating member monthly stats for member {member_id} (Month: {month_key}, Duration: {duration}) in _process_session_end_data: {e}")
+                # エラーが発生しても処理は続行
+                # update_member_monthly_stats はエラー時に DEFAULT_TOTAL_DURATION を返すため、after_total はその値になる
+
+                # データベース書き込みエラー発生を通知
+                notification_channel_id = config.get_notification_channel_id(guild.id)
+                if notification_channel_id:
+                    notification_channel = self.bot.get_channel(notification_channel_id)
+                    if notification_channel:
+                        error_embed = discord.Embed(
+                            title="データベースエラー発生",
+                            description=f"メンバー {member_id} の月間統計更新中にエラーが発生しました。\nエラー: `{e}`",
+                            color=discord.Color.red()
+                        )
+                        try:
+                            await notification_channel.send(embed=error_embed)
+                            logger.info(f"Sent database error notification to channel {notification_channel_id}.")
+                        except discord.Forbidden:
+                            logger.error(f"Error: No permission to send error notification to channel {notification_channel.name} ({notification_channel_id}).")
+                        except Exception as notify_e:
+                            logger.error(f"An error occurred while sending error notification: {notify_e}")
+
+            logger.debug(f"Processing complete for member {member_id}. Before Total: {before_total}, After Total: {after_total}")
             m_obj = guild.get_member(member_id)
             if m_obj:
                 notification_channel_id = config.get_notification_channel_id(guild.id) # config から取得
+                # マイルストーン通知は、データベース更新が成功したかに関わらず、取得できた before_total と update_member_monthly_stats が返した after_total を使用してチェック
                 await self._check_and_notify_milestone(m_obj, guild, before_total, after_total, notification_channel_id)
             else:
                 logger.warning(f"Member {member_id} not found in guild {guild.id}. Cannot check/notify milestone.")
