@@ -6,7 +6,7 @@ import logging
 
 from database import record_voice_session_to_db
 from formatters import format_duration, convert_utc_to_jst
-from config import get_notification_channel_id
+import config
 import constants
 
 # ロガーを取得
@@ -219,8 +219,33 @@ class StatisticalSessionManager:
             # セッション全体の通話時間を計算し、データベースに記録
             overall_duration = (now - session_data["session_start"]).total_seconds()
             logger.info(f"Recording overall two-or-more-member call session for channel {channel.id} ({guild_id}). Start time: {session_data['session_start']}, Duration: {overall_duration}, All participants: {list(session_data['all_participants'])}")
-            # TODO: データベース操作のエラーハンドリングを追加する（例: try...except）
-            await record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
+            try:
+                await record_voice_session_to_db(session_data["session_start"], overall_duration, list(session_data["all_participants"]))
+                logger.debug("Successfully recorded voice session to DB.")
+            except Exception as e:
+                logger.error(f"An error occurred while recording voice session to DB for channel {channel.id} ({guild_id}): {e}")
+                # データベース書き込みエラーが発生しても、セッションはアクティブリストから削除する
+                # これにより、データベースに記録されなくても、内部的にはセッションが終了したとみなされる
+                pass # エラーを再送出しない
+
+                # データベース書き込みエラー発生を通知
+                notification_channel_id = config.get_notification_channel_id(guild_id)
+                if notification_channel_id:
+                    notification_channel = self.bot.get_channel(notification_channel_id)
+                    if notification_channel:
+                        error_embed = discord.Embed(
+                            title="データベースエラー発生",
+                            description=f"チャンネル {channel.name} ({channel.id}) のセッション記録中にエラーが発生しました。\nエラー: `{e}`",
+                            color=discord.Color.red()
+                        )
+                        try:
+                            await notification_channel.send(embed=error_embed)
+                            logger.info(f"Sent database error notification to channel {notification_channel_id}.")
+                        except discord.Forbidden:
+                            logger.error(f"Error: No permission to send error notification to channel {notification_channel.name} ({notification_channel_id}).")
+                        except Exception as notify_e:
+                            logger.error(f"An error occurred while sending error notification: {notify_e}")
+
             self.active_voice_sessions.pop(key, None) # アクティブセッションから削除
             logger.debug(f"Removed channel {key} from active_voice_sessions.")
 
