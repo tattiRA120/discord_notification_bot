@@ -29,7 +29,7 @@ class CallNotificationManager:
         指定されたギルドの通知チャンネルにEmbedを送信します。
         通知チャンネルの取得、存在確認、Embed送信、例外処理を行います。
         """
-        notification_channel_id = get_notification_channel_id(guild_id)
+        notification_channel_id = config.get_notification_channel_id(guild_id)
         if notification_channel_id:
             notification_channel = self.bot.get_channel(notification_channel_id)
             if notification_channel:
