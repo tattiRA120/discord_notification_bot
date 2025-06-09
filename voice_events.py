@@ -4,7 +4,7 @@ import asyncio
 import logging
 from discord.ext import commands # Cog を使用するためにインポート
 
-from database import get_total_call_time, get_guild_settings, update_member_monthly_stats, record_voice_session_to_db
+from database import get_total_call_time, get_guild_settings, update_member_monthly_stats, record_voice_session_to_db, increment_mute_count
 import config
 from voice_state_manager import VoiceStateManager, CallNotificationManager, StatisticalSessionManager, BotStatusUpdater
 import formatters
@@ -230,6 +230,13 @@ class SleepCheckManager:
                 if member:
                     try:
                         await member.edit(mute=True, deafen=True)
+                        # ミュートカウントをインクリメント
+                        try:
+                            await increment_mute_count(member.id)
+                            logger.info(f"Incremented mute count for member {member.id}.")
+                        except Exception as e_inc:
+                            logger.error(f"Failed to increment mute count for member {member.id}: {e_inc}")
+
                         logger.info(f"Muted member {member.display_name} ({member.id}).")
                         # ボットがミュートしたメンバーを記録
                         self.add_bot_muted_member(member.id)

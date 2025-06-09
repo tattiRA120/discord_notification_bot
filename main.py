@@ -102,6 +102,7 @@ async def on_ready():
             bot.tree.add_command(bot_commands_instance.changesendchannel_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.debug_annual_stats_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.set_sleep_check_callback, guild=guild)
+            bot.tree.add_command(bot_commands_instance.get_mute_count_callback, guild=guild)
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)

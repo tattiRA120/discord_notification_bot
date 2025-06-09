@@ -8,7 +8,7 @@ import logging
 from database import (
     get_db_connection, get_total_call_time, get_guild_settings, update_guild_settings,
     get_monthly_voice_sessions, get_monthly_member_stats, get_annual_voice_sessions, get_annual_member_total_stats,
-    get_participants_by_session_ids, get_total_call_time_for_guild_members
+    get_participants_by_session_ids, get_total_call_time_for_guild_members, get_mute_count
 )
 import config
 import voice_state_manager
@@ -472,3 +472,30 @@ class BotCommands(commands.Cog):
             ephemeral=True
         )
         logger.info("/set_sleep_check command executed successfully.")
+
+    # --- /get_mute_count コマンド ---
+    # 指定したメンバーの自動ミュート回数を表示するコマンドのコールバック関数
+    @app_commands.command(name="get_mute_count", description="指定したメンバーの自動ミュート回数を表示します")
+    @app_commands.describe(member="ミュート回数を確認するメンバー")
+    @app_commands.guild_only()
+    async def get_mute_count_callback(self, interaction: discord.Interaction, member: discord.Member):
+        logger.info(f"Received /get_mute_count command from {interaction.user.id} in guild {interaction.guild.id} for member: {member.id}")
+
+        try:
+            mute_count = await get_mute_count(member.id)
+            logger.debug(f"Mute count for member {member.id}: {mute_count}")
+
+            embed = discord.Embed(color=constants.EMBED_COLOR_INFO)
+            embed.set_author(name=member.display_name, icon_url=member.display_avatar.url)
+
+            if mute_count == 0:
+                embed.description = "まだ自動ミュートされたことはありません。"
+            else:
+                embed.description = f"自動ミュートされた回数: {mute_count} 回"
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            logger.info(f"/get_mute_count command executed successfully for member {member.id}.")
+
+        except Exception as e:
+            logger.error(f"An error occurred during /get_mute_count for member {member.id}: {e}")
+            await interaction.response.send_message("ミュート回数の取得中にエラーが発生しました。", ephemeral=True)

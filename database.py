@@ -104,6 +104,17 @@ async def init_db():
         """)
         logger.debug(f"Checked or created table '{constants.TABLE_SETTINGS}'.")
 
+        # user_mute_stats テーブル: ユーザーごとのミュート回数を記録
+        # user_id: ユーザーID (主キー)
+        # mute_count: ミュート回数 (デフォルト0)
+        await cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {constants.TABLE_USER_MUTE_STATS} (
+                {constants.COLUMN_MEMBER_ID} INTEGER PRIMARY KEY,
+                {constants.COLUMN_MUTE_COUNT} INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        logger.debug(f"Checked or created table '{constants.TABLE_USER_MUTE_STATS}'.")
+
         # インデックスの作成 (クエリパフォーマンス向上のため)
         # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
         # より構造的なクエリビルダやライブラリの利用も検討可能。
@@ -120,6 +131,7 @@ async def init_db():
         # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
         # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_member_monthly_stats_member_id ON {constants.TABLE_MEMBER_MONTHLY_STATS} ({constants.COLUMN_MEMBER_ID})")
+        # user_mute_stats テーブルのインデックス (member_id は主キーなので自動的にインデックスが作成される)
         logger.debug("Checked or created indexes.")
 
         await conn.commit()
@@ -269,6 +281,62 @@ SQL_UPSERT_MEMBER_MONTHLY_STATS = f"""
     ON CONFLICT({constants.COLUMN_MONTH_KEY}, {constants.COLUMN_MEMBER_ID}) DO UPDATE SET
     {constants.COLUMN_TOTAL_DURATION} = {constants.COLUMN_TOTAL_DURATION} + excluded.{constants.COLUMN_TOTAL_DURATION}
 """
+
+# user_mute_stats テーブルへの UPSERT (INSERT or UPDATE) クエリ
+# 指定されたユーザーIDが存在する場合は mute_count をインクリメントし、存在しない場合は新しいレコードを挿入
+SQL_UPSERT_MUTE_COUNT = f"""
+    INSERT INTO {constants.TABLE_USER_MUTE_STATS} ({constants.COLUMN_MEMBER_ID}, {constants.COLUMN_MUTE_COUNT})
+    VALUES (?, 1)
+    ON CONFLICT({constants.COLUMN_MEMBER_ID}) DO UPDATE SET
+    {constants.COLUMN_MUTE_COUNT} = {constants.COLUMN_MUTE_COUNT} + 1
+"""
+
+# user_mute_stats テーブルから指定されたユーザーIDのミュート回数を取得するクエリ
+SQL_GET_MUTE_COUNT = f"""
+    SELECT {constants.COLUMN_MUTE_COUNT}
+    FROM {constants.TABLE_USER_MUTE_STATS}
+    WHERE {constants.COLUMN_MEMBER_ID} = ?
+"""
+
+
+async def increment_mute_count(user_id: int):
+    """
+    指定されたユーザーのミュート回数をインクリメントします。
+    ユーザーが存在しない場合は、新しいレコードを作成します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(SQL_UPSERT_MUTE_COUNT, (user_id,))
+            await conn.commit()
+            logger.info(f"Incremented mute count for user {user_id}. Changes committed.")
+    except Exception as e:
+        logger.error(f"An error occurred while incrementing mute count for user {user_id}: {e}")
+        # エラー発生時もロールバックは不要 (ON CONFLICT のため)
+        # 必要に応じてエラーを再送出するか、特定の値を返す
+        raise
+
+
+async def get_mute_count(user_id: int) -> int:
+    """
+    指定されたユーザーのミュート回数を取得します。
+    ユーザーが存在しない場合は0を返します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(SQL_GET_MUTE_COUNT, (user_id,))
+            result = await cursor.fetchone()
+            if result:
+                mute_count = result[constants.COLUMN_MUTE_COUNT]
+                logger.info(f"Fetched mute count for user {user_id}: {mute_count}")
+                return mute_count
+            else:
+                logger.info(f"No mute count record found for user {user_id}. Returning 0.")
+                return 0
+    except Exception as e:
+        logger.error(f"An error occurred while fetching mute count for user {user_id}: {e}")
+        return 0 # エラー発生時は0を返す
 
 
 async def get_participants_by_session_ids(session_ids: list):
