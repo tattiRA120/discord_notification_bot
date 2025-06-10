@@ -1,3 +1,4 @@
 discord.py
 aiosqlite
 PyNaCl
+python-dotenv

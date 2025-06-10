@@ -3,6 +3,7 @@ from discord.ext import commands, tasks
 import os
 import asyncio
 import logging
+from dotenv import load_dotenv
 
 import constants
 
@@ -20,6 +21,7 @@ log_level = os.getenv('LOG_LEVEL', constants.LOGGING_LEVEL).upper()
 logging.basicConfig(level=log_level, format=constants.LOGGING_FORMAT)
 
 # 設定の読み込み (環境変数からトークンを取得)
+load_dotenv()
 TOKEN = os.getenv('DISCORD_BOT_TOKEN')
 if TOKEN is None:
     logging.error("DISCORD_BOT_TOKEN environment variable is not set.")
