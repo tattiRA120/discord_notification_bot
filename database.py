@@ -2,6 +2,7 @@ import aiosqlite
 import os
 import logging
 import constants
+import datetime
 
 # ロガーを取得
 logger = logging.getLogger(__name__)
@@ -104,6 +105,30 @@ async def init_db():
         """)
         logger.debug(f"Checked or created table '{constants.TABLE_SETTINGS}'.")
 
+        # user_mute_stats テーブル: ユーザーごとのミュート回数を記録
+        # user_id: ユーザーID (主キー)
+        # mute_count: ミュート回数 (デフォルト0)
+        await cursor.execute(f"""
+            CREATE TABLE IF NOT EXISTS {constants.TABLE_USER_MUTE_STATS} (
+                {constants.COLUMN_MEMBER_ID} INTEGER PRIMARY KEY,
+                {constants.COLUMN_MUTE_COUNT} INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        logger.debug(f"Checked or created table '{constants.TABLE_USER_MUTE_STATS}'.")
+
+        # mute_events テーブル: ミュートイベントの履歴を記録
+        # id: イベントID (主キー、自動採番)
+        # user_id: ミュートされたユーザーのID
+        # timestamp: イベント発生時刻 (ISO 8601 形式)
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS mute_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        logger.debug("Checked or created table 'mute_events'.")
+
         # インデックスの作成 (クエリパフォーマンス向上のため)
         # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
         # より構造的なクエリビルダやライブラリの利用も検討可能。
@@ -120,6 +145,7 @@ async def init_db():
         # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
         # より構造的なクエリビルダやライブラリの利用も検討可能。
         await cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_member_monthly_stats_member_id ON {constants.TABLE_MEMBER_MONTHLY_STATS} ({constants.COLUMN_MEMBER_ID})")
+        # user_mute_stats テーブルのインデックス (member_id は主キーなので自動的にインデックスが作成される)
         logger.debug("Checked or created indexes.")
 
         await conn.commit()
@@ -269,6 +295,125 @@ SQL_UPSERT_MEMBER_MONTHLY_STATS = f"""
     ON CONFLICT({constants.COLUMN_MONTH_KEY}, {constants.COLUMN_MEMBER_ID}) DO UPDATE SET
     {constants.COLUMN_TOTAL_DURATION} = {constants.COLUMN_TOTAL_DURATION} + excluded.{constants.COLUMN_TOTAL_DURATION}
 """
+
+# user_mute_stats テーブルへの UPSERT (INSERT or UPDATE) クエリ
+# 指定されたユーザーIDが存在する場合は mute_count をインクリメントし、存在しない場合は新しいレコードを挿入
+SQL_UPSERT_MUTE_COUNT = f"""
+    INSERT INTO {constants.TABLE_USER_MUTE_STATS} ({constants.COLUMN_MEMBER_ID}, {constants.COLUMN_MUTE_COUNT})
+    VALUES (?, 1)
+    ON CONFLICT({constants.COLUMN_MEMBER_ID}) DO UPDATE SET
+    {constants.COLUMN_MUTE_COUNT} = {constants.COLUMN_MUTE_COUNT} + 1
+"""
+
+# user_mute_stats テーブルから指定されたユーザーIDのミュート回数を取得するクエリ
+SQL_GET_MUTE_COUNT = f"""
+    SELECT {constants.COLUMN_MUTE_COUNT}
+    FROM {constants.TABLE_USER_MUTE_STATS}
+    WHERE {constants.COLUMN_MEMBER_ID} = ?
+"""
+
+# user_mute_stats テーブルから月ごとのミュート回数を取得するクエリ
+SQL_GET_MONTHLY_MUTE_COUNTS = f"""
+    SELECT
+        strftime('%Y-%m', start_time) AS month_key,
+        p.member_id,
+        COUNT(DISTINCT s.id) AS mute_count
+    FROM {constants.TABLE_SESSIONS} s
+    JOIN {constants.TABLE_SESSION_PARTICIPANTS} p ON s.id = p.session_id
+    WHERE strftime('%Y-%m', start_time) = ?
+    AND p.member_id IN (SELECT member_id FROM {constants.TABLE_USER_MUTE_STATS})
+    GROUP BY month_key, p.member_id
+    ORDER BY mute_count DESC
+"""
+
+# user_mute_stats テーブルから累計のミュート回数を取得するクエリ
+SQL_GET_TOTAL_MUTE_COUNTS = f"""
+    SELECT {constants.COLUMN_MEMBER_ID}, {constants.COLUMN_MUTE_COUNT}
+    FROM {constants.TABLE_USER_MUTE_STATS}
+    ORDER BY {constants.COLUMN_MUTE_COUNT} DESC
+"""
+
+
+async def increment_mute_count(user_id: int):
+    """
+    指定されたユーザーのミュート回数をインクリメントし、ミュートイベントを記録します。
+    ユーザーが存在しない場合は、新しいレコードを作成します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            # user_mute_stats テーブルのミュートカウントをインクリメント
+            await cursor.execute(SQL_UPSERT_MUTE_COUNT, (user_id,))
+            logger.debug(f"Incremented mute count in user_mute_stats for user {user_id}.")
+
+            # mute_events テーブルにイベントを記録
+            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            await cursor.execute("INSERT INTO mute_events (user_id, timestamp) VALUES (?, ?)", (user_id, timestamp))
+            logger.info(f"Recorded mute event for user {user_id} at {timestamp}.")
+
+            await conn.commit()
+            logger.info(f"Incremented mute count and recorded event for user {user_id}. Changes committed.")
+    except Exception as e:
+        logger.error(f"An error occurred while incrementing mute count for user {user_id}: {e}")
+        try:
+            async with DatabaseConnection() as conn_rollback:
+                 await conn_rollback.rollback()
+                 logger.warning("Rolled back database changes due to error in increment_mute_count.")
+        except Exception as rollback_e:
+             logger.error(f"An error occurred during rollback in increment_mute_count: {rollback_e}")
+        raise
+
+
+async def get_mute_count(user_id: int) -> int:
+    """
+    指定されたユーザーのミュート回数を取得します。
+    ユーザーが存在しない場合は0を返します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(SQL_GET_MUTE_COUNT, (user_id,))
+            result = await cursor.fetchone()
+            if result:
+                mute_count = result[constants.COLUMN_MUTE_COUNT]
+                logger.info(f"Fetched mute count for user {user_id}: {mute_count}")
+                return mute_count
+            else:
+                logger.info(f"No mute count record found for user {user_id}. Returning 0.")
+                return 0
+    except Exception as e:
+        logger.error(f"An error occurred while fetching mute count for user {user_id}: {e}")
+        return 0 # エラー発生時は0を返す
+
+
+async def get_monthly_mute_counts(month_key: str) -> list[tuple[int, int]]:
+    """指定された月のメンバー別ミュート回数を取得する。"""
+    async with aiosqlite.connect(DB_FILE) as db:
+        cursor = await db.execute(
+            """
+            SELECT user_id, COUNT(*)
+            FROM mute_events
+            WHERE STRFTIME('%Y-%m', timestamp) = ?
+            GROUP BY user_id
+            ORDER BY COUNT(*) DESC
+            """,
+            (month_key,)
+        )
+        return await cursor.fetchall()
+
+
+async def get_total_mute_counts() -> list[tuple[int, int]]:
+    """全メンバーの累計ミュート回数を取得する。"""
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(SQL_GET_TOTAL_MUTE_COUNTS)
+            results = await cursor.fetchall()
+            logger.info(f"Fetched total mute counts for {len(results)} users.")
+            return [(row[constants.COLUMN_MEMBER_ID], row[constants.COLUMN_MUTE_COUNT]) for row in results]
+    except Exception as e:
+        logger.error(f"An error occurred while fetching total mute counts: {e}")
+        return []
 
 
 async def get_participants_by_session_ids(session_ids: list):

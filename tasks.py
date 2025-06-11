@@ -38,6 +38,7 @@ class BotTasks(commands.Cog):
             channel = self.bot.get_channel(channel_id)
             if channel:
                 logger.debug(f"Sending stats to channel {channel_id} in guild {guild_id}")
+                # create_embed_func は (guild, period_display) を受け取り、(embed, display_period) を返すことを想定
                 embed, display_period = await create_embed_func(guild, period_display)
                 if embed:
                     await channel.send(embed=embed)
@@ -46,7 +47,7 @@ class BotTasks(commands.Cog):
                     logger.info(f"No stats found for {display_period} in guild {guild_id}")
                     embed = discord.Embed(
                         title=embed_title,
-                        description=f"{display_period}{constants.MESSAGE_NO_CALL_RECORDS}",
+                        description=f"{period_display}{constants.MESSAGE_NO_CALL_RECORDS}",
                         color=constants.EMBED_COLOR_WARNING
                     )
                     await channel.send(embed=embed)
@@ -54,6 +55,33 @@ class BotTasks(commands.Cog):
                 logger.warning(f"Notification channel {channel_id} not found for guild {guild_id}")
         else:
             logger.info(f"No notification channel set for guild {guild_id}")
+
+    async def _create_annual_stats_embed_for_task(self, guild, year_str: str):
+        """
+        年間統計情報Embedをタスクから呼び出すためのヘルパー関数。
+        commands.pyのget_and_process_annual_stats_dataと_create_annual_stats_embedを呼び出す。
+        """
+        logger.info(f"Creating annual stats embed for task for guild {guild.id}, year {year_str}")
+        # commands.py の get_and_process_annual_stats_data を呼び出してデータを取得
+        (
+            year_display,
+            avg_duration,
+            longest_info,
+            ranking_text,
+            sessions_data,
+            members_total,
+        ) = await self.bot_commands_cog.get_and_process_annual_stats_data(guild, year_str)
+
+        if not sessions_data:
+            logger.info(f"No annual stats found for year {year_str}. Returning None.")
+            return None, year_display # データがない場合はNoneを返す
+
+        # commands.py の _create_annual_stats_embed を呼び出してEmbedを作成
+        embed = await self.bot_commands_cog._create_annual_stats_embed(
+            year_display, avg_duration, longest_info, ranking_text
+        )
+        logger.debug("Annual stats embed for task created successfully.")
+        return embed, year_display
 
 
     # --- 月間統計情報送信タスク ---
@@ -102,7 +130,7 @@ class BotTasks(commands.Cog):
                     await self._send_stats_to_channel(
                         guild,
                         year_str,
-                        self.bot_commands_cog._create_annual_stats_embed,
+                        self._create_annual_stats_embed_for_task, # ここを修正
                         constants.EMBED_TITLE_ANNUAL_STATS
                     )
                 logger.info("Annual stats task finished.")

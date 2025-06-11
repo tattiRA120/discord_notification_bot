@@ -1,4 +1,6 @@
 discord.py
 aiosqlite
 PyNaCl
+pytest
+pytest-asyncio
 python-dotenv
