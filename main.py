@@ -94,15 +94,11 @@ async def on_ready():
         logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
-            bot.tree.add_command(bot_commands_instance.monthly_stats_callback, guild=guild)
-            bot.tree.add_command(bot_commands_instance.total_time_callback, guild=guild)
-            bot.tree.add_command(bot_commands_instance.call_ranking_callback, guild=guild)
-            bot.tree.add_command(bot_commands_instance.call_duration_callback, guild=guild)
+            bot.tree.add_command(bot_commands_instance.stats, guild=guild)
             bot.tree.add_command(bot_commands_instance.help_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.changesendchannel_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.debug_annual_stats_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.set_sleep_check_callback, guild=guild)
-            bot.tree.add_command(bot_commands_instance.get_mute_count_callback, guild=guild)
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)
