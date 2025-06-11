@@ -38,6 +38,10 @@ class DiscordHandler(logging.Handler):
         if record.levelno < logging.WARNING:
             return # WARNING未満のログはDiscordに送信しない
 
+        # 「Bot is ready.」メッセージはDiscordに送信しない
+        if record.getMessage() == 'Bot is ready.':
+            return
+
         # Discordに送信するタスクを非同期で実行
         self.bot.loop.create_task(self.send_log_to_discord(record))
 
