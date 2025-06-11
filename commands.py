@@ -312,7 +312,7 @@ class BotCommands(commands.Cog):
         logger.info(
             f"Received /stats monthly command from {interaction.user.id} in guild {interaction.guild.id} with month: {month}"
         )
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         # 月の指定がない場合は現在の月を使用
         if month is None:
@@ -350,7 +350,7 @@ class BotCommands(commands.Cog):
             )
             return
 
-        await interaction.followup.send(embed=embed, ephemeral=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         logger.info(f"/stats monthly command executed successfully for {month_display}")
 
     # --- /stats total サブコマンド ---
@@ -366,7 +366,7 @@ class BotCommands(commands.Cog):
         logger.info(
             f"Received /stats total command from {interaction.user.id} in guild {interaction.guild.id} for member: {member.id}"
         )
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         # 総通話時間の取得と表示 (既存の /total_time ロジックを移植)
         total_seconds = await get_total_call_time(member.id)
@@ -405,7 +405,7 @@ class BotCommands(commands.Cog):
                 name="寝落ちミュート回数", value=f"{mute_count} 回", inline=False
             )
 
-        await interaction.followup.send(embed=embed, ephemeral=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         logger.info(
             f"/stats total command executed successfully for member {member.id}"
         )
@@ -420,7 +420,7 @@ class BotCommands(commands.Cog):
         logger.info(
             f"Received /stats ranking command from {interaction.user.id} in guild {interaction.guild.id}"
         )
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         members = guild.members
 
@@ -501,7 +501,7 @@ class BotCommands(commands.Cog):
             name="寝落ちミュート回数ランキング", value=mute_ranking_text, inline=False
         )
 
-        await interaction.followup.send(embed=embed, ephemeral=False)
+        await interaction.followup.send(embed=embed, ephemeral=True)
         logger.info("/stats ranking command executed successfully.")
 
     # --- /stats current サブコマンド ---
@@ -511,7 +511,7 @@ class BotCommands(commands.Cog):
         logger.info(
             f"Received /stats current command from {interaction.user.id} in guild {interaction.guild.id}"
         )
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         guild_id = interaction.guild.id
         # voice_state_manager から現在アクティブな通話とその継続時間を取得
@@ -547,7 +547,7 @@ class BotCommands(commands.Cog):
                         inline=False,
                     )
 
-            await interaction.followup.send(embed=embed, ephemeral=False)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             logger.info("/stats current command executed successfully.")
 
     # --- /help コマンド ---
