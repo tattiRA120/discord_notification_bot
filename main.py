@@ -30,13 +30,24 @@ class DiscordHandler(logging.Handler):
         super().__init__()
         self.bot = bot_instance
         self.setFormatter(logging.Formatter(constants.LOGGING_FORMAT))
+        self.sent_messages = []  # 送信済みのメッセージを保存するリスト
+        self.max_messages = 10  # 保存するメッセージの最大数
 
     def emit(self, record):
         if not self.bot.is_ready():
             return # ボットが準備できていない場合は送信しない
 
+        message = record.getMessage()
+        if message in self.sent_messages:
+            return  # 同じメッセージが既に送信されている場合は送信しない
+
         if record.levelno < logging.WARNING:
             return # WARNING未満のログはDiscordに送信しない
+
+        # メッセージを送信済みのリストに追加
+        self.sent_messages.append(message)
+        if len(self.sent_messages) > self.max_messages:
+            self.sent_messages.pop(0)  # 古いメッセージを削除
 
         # 「Bot is ready.」メッセージはDiscordに送信しない
         if record.getMessage() == 'Bot is ready.':
@@ -112,8 +123,11 @@ async def on_ready():
     # Cog の追加
     # VoiceEvents Cog は sleep_check_manager と voice_state_manager を必要とする
     voice_events_cog = VoiceEvents(bot, sleep_check_manager, voice_state_manager)
-    await bot.add_cog(voice_events_cog)
-    logging.info("VoiceEvents Cog added.")
+    if 'VoiceEvents' not in bot.cogs:
+        await bot.add_cog(voice_events_cog)
+        logging.info("VoiceEvents Cog added.")
+    else:
+        logging.info("VoiceEvents Cog already loaded.")
 
     # BotCommands のインスタンスを作成 (Cogとしては追加しない)
     # BotCommands は voice_state_manager を必要とする
@@ -122,8 +136,11 @@ async def on_ready():
 
     # BotTasks Cog は bot_commands_instance を必要とする
     tasks_cog = BotTasks(bot, bot_commands_instance)
-    await bot.add_cog(tasks_cog)
-    logging.info("BotTasks Cog added.")
+    if 'BotTasks' not in bot.cogs:
+        await bot.add_cog(tasks_cog)
+        logging.info("BotTasks Cog added.")
+    else:
+        logging.info("BotTasks Cog already loaded.")
 
     # 定期実行タスクの開始
     tasks_cog.send_monthly_stats_task.start()
