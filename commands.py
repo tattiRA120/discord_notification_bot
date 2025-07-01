@@ -130,9 +130,7 @@ class BotCommands(commands.Cog):
 
     # --- 月間統計Embed作成用ヘルパー関数 ---
     # _get_monthly_statistics から取得した情報をもとに、月間統計表示用のEmbedを作成します。
-    async def _create_monthly_stats_embed(
-        self, guild, month: str, mute_ranking_text: str = "なし"
-    ):
+    async def _create_monthly_stats_embed(self, guild, month: str):
         logger.info(f"Creating monthly stats embed for guild {guild.id}, month {month}")
         try:
             year, mon = month.split("-")
@@ -145,6 +143,9 @@ class BotCommands(commands.Cog):
         monthly_avg, longest_info, ranking_text = await self._get_monthly_statistics(
             guild, month
         )
+
+        # 月間ミュート回数ランキングの取得
+        mute_ranking_text = await self._get_monthly_mute_ranking(guild, month)
 
         # 統計情報が取得できたかチェックし、データがない場合はNoneを返す
         if (
@@ -332,14 +333,9 @@ class BotCommands(commands.Cog):
             )
             return
 
-        # 月間ミュート回数ランキングの取得
-        mute_ranking_text = await self._get_monthly_mute_ranking(
-            interaction.guild, month
-        )
-
         # 月間通話統計Embedを作成
         embed, month_display_for_embed = await self._create_monthly_stats_embed(
-            interaction.guild, month, mute_ranking_text
+            interaction.guild, month
         )
 
         # Embedが作成できたか確認し、結果を送信
