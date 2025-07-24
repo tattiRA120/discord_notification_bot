@@ -1,4 +1,5 @@
-discord.py
+discord.py==2.4.0
+aiohttp==3.12.14
 aiosqlite
 PyNaCl
 pytest
