@@ -166,6 +166,13 @@ async def on_ready():
         if guild is None:
             logging.warning("Skipping command registration for a None guild object.")
             continue
+        if bot.tree is None:
+            logging.error("bot.tree is None inside guild loop. This should not happen.")
+            continue
+        if not hasattr(bot.tree, 'clear_commands') or bot.tree.clear_commands is None:
+            logging.error("bot.tree.clear_commands is not available or None. This should not happen.")
+            continue
+
         logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
