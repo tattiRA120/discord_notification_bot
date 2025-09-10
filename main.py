@@ -160,6 +160,8 @@ async def on_ready():
         logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
+            # 既存のギルドコマンドをクリアしてから再登録することで、CommandAlreadyRegistered エラーを回避
+            await bot.tree.clear_commands(guild=guild)
             bot.tree.add_command(bot_commands_instance.stats, guild=guild)
             bot.tree.add_command(bot_commands_instance.help_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.changesendchannel_callback, guild=guild)
