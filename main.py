@@ -91,6 +91,18 @@ async def on_ready():
     logging.info(f'Logged in as {bot.user.name}')
     logging.info(f'Discord.py version: {discord.__version__}')
 
+    # ボットが完全に準備できるまで待機
+    await bot.wait_until_ready()
+    logging.info("Bot is fully ready, proceeding with setup.")
+
+    if bot.tree is None:
+        logging.error("bot.tree is None. This should not happen after wait_until_ready.")
+        await bot.close()
+        exit(1)
+    else:
+        logging.info(f"bot.tree type: {type(bot.tree)}")
+        logging.info(f"bot.tree.clear_commands type: {type(bot.tree.clear_commands)}")
+
     # DiscordHandler をロガーに追加
     discord_handler = DiscordHandler(bot)
     logger.addHandler(discord_handler)
@@ -160,11 +172,30 @@ async def on_ready():
         if guild is None:
             logging.warning("Skipping command registration for a None guild object.")
             continue
+        if bot.tree is None:
+            logging.error("bot.tree is None inside guild loop. This should not happen.")
+            continue
+        if not hasattr(bot.tree, 'clear_commands') or bot.tree.clear_commands is None:
+            logging.error("bot.tree.clear_commands is not available or None. This should not happen.")
+            continue
+
         logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
             # 既存のギルドコマンドをクリアしてから再登録することで、CommandAlreadyRegistered エラーを回避
-            await bot.tree.clear_commands(guild=guild)
+            logging.info(f"Before clearing commands for guild {guild.id} ({guild.name}): bot.tree.clear_commands is {bot.tree.clear_commands}, type: {type(bot.tree.clear_commands)}")
+            try:
+                await bot.tree.clear_commands(guild=guild)
+            except TypeError as te:
+                logging.error(f"TypeError when clearing commands for guild {guild.id} ({guild.name}): {te}", exc_info=True)
+                logging.error(f"Type of bot.tree: {type(bot.tree)}")
+                logging.error(f"Type of bot.tree.clear_commands: {type(bot.tree.clear_commands)}")
+                logging.error(f"Type of guild: {type(guild)}")
+                continue # エラーが発生したギルドはスキップして次のギルドへ
+            except Exception as e:
+                logging.error(f"Unexpected error when clearing commands for guild {guild.id} ({guild.name}): {e}", exc_info=True)
+                continue
+
             bot.tree.add_command(bot_commands_instance.stats, guild=guild)
             bot.tree.add_command(bot_commands_instance.help_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.changesendchannel_callback, guild=guild)
