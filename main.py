@@ -157,6 +157,9 @@ async def on_ready():
     logging.info("Starting manual command registration and synchronization for all joined guilds.")
     synced_guild_count = 0
     for guild in bot.guilds:
+        if guild is None:
+            logging.warning("Skipping command registration for a None guild object.")
+            continue
         logging.info(f'Starting command registration for guild {guild.id} ({guild.name}).')
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
