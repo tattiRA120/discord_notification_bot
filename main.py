@@ -183,6 +183,7 @@ async def on_ready():
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
             # 既存のギルドコマンドをクリアしてから再登録することで、CommandAlreadyRegistered エラーを回避
+            logging.info(f"Before clearing commands for guild {guild.id} ({guild.name}): bot.tree.clear_commands is {bot.tree.clear_commands}, type: {type(bot.tree.clear_commands)}")
             try:
                 await bot.tree.clear_commands(guild=guild)
             except TypeError as te:
