@@ -90,12 +90,18 @@ bot = commands.Bot(command_prefix=constants.COMMAND_PREFIX, intents=intents)
 async def on_ready():
     logging.info(f'Logged in as {bot.user.name}')
     logging.info(f'Discord.py version: {discord.__version__}')
+
+    # ボットが完全に準備できるまで待機
+    await bot.wait_until_ready()
+    logging.info("Bot is fully ready, proceeding with setup.")
+
     if bot.tree is None:
-        logging.error("bot.tree is None. This should not happen.")
+        logging.error("bot.tree is None. This should not happen after wait_until_ready.")
         await bot.close()
         exit(1)
     else:
         logging.info(f"bot.tree type: {type(bot.tree)}")
+        logging.info(f"bot.tree.clear_commands type: {type(bot.tree.clear_commands)}")
 
     # DiscordHandler をロガーに追加
     discord_handler = DiscordHandler(bot)
