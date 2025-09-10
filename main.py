@@ -177,7 +177,18 @@ async def on_ready():
         try:
             # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
             # 既存のギルドコマンドをクリアしてから再登録することで、CommandAlreadyRegistered エラーを回避
-            await bot.tree.clear_commands(guild=guild)
+            try:
+                await bot.tree.clear_commands(guild=guild)
+            except TypeError as te:
+                logging.error(f"TypeError when clearing commands for guild {guild.id} ({guild.name}): {te}", exc_info=True)
+                logging.error(f"Type of bot.tree: {type(bot.tree)}")
+                logging.error(f"Type of bot.tree.clear_commands: {type(bot.tree.clear_commands)}")
+                logging.error(f"Type of guild: {type(guild)}")
+                continue # エラーが発生したギルドはスキップして次のギルドへ
+            except Exception as e:
+                logging.error(f"Unexpected error when clearing commands for guild {guild.id} ({guild.name}): {e}", exc_info=True)
+                continue
+
             bot.tree.add_command(bot_commands_instance.stats, guild=guild)
             bot.tree.add_command(bot_commands_instance.help_callback, guild=guild)
             bot.tree.add_command(bot_commands_instance.changesendchannel_callback, guild=guild)
