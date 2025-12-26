@@ -86,6 +86,19 @@ jobs:
                 labels: ['safe-to-preview']
               });
               console.log(`Added 'safe-to-preview' label to PR #${pr.number}`);
+
+              // Trigger auto-merge workflow
+              console.log('Triggering dependabot-auto-merge workflow...');
+              await github.rest.actions.createWorkflowDispatch({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: 'dependabot-auto-merge.yml',
+                ref: 'main', 
+                inputs: {
+                  pr_number: pr.number.toString()
+                }
+              });
+              console.log('Available workflows triggered.');
             } else {
               console.log('Not all security checks have passed yet.');
               console.log(`Missing: ${requiredWorkflows.filter(name => !finishedWorkflows.has(name)).join(', ')}`);

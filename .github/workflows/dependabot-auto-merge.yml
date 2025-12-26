@@ -2,6 +2,11 @@ name: Dependabot auto-merge
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to merge'
+        required: true
 
 permissions:
   contents: write
@@ -14,11 +19,15 @@ jobs:
   dependabot:
     runs-on: ubuntu-latest
     if: |
-      (github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'tattiRA120') &&
-      contains(join(github.event.pull_request.labels.*.name, ','), 'safe-to-preview')
+      (github.event_name == 'workflow_dispatch') ||
+      (
+        (github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'tattiRA120') &&
+        contains(join(github.event.pull_request.labels.*.name, ','), 'safe-to-preview')
+      )
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PR_URL: ${{github.event.pull_request.html_url}}
+      PR_URL: ${{ github.event.pull_request.html_url }}
+      PR_NUMBER: ${{ inputs.pr_number }}
     steps:
       - name: Harden the runner
         uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
@@ -38,7 +47,11 @@ jobs:
 
       - name: Check if all workflows have passed
         run: |
-          PR_URL="${{github.event.pull_request.html_url}}"
+          if [ -n "${{ inputs.pr_number }}" ]; then
+            PR_URL="https://github.com/${{ github.repository }}/pull/${{ inputs.pr_number }}"
+          else
+            PR_URL="${{ github.event.pull_request.html_url }}"
+          fi
           INTERVAL=10
           MAX_RETRIES=180 # 30 mins max
           CURRENT_WORKFLOW="Dependabot auto-merge"
