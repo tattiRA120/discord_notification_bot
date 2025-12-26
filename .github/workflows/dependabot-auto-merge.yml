@@ -1,0 +1,102 @@
+name: Dependabot auto-merge
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  actions: read
+  statuses: read
+
+jobs:
+  dependabot:
+    runs-on: ubuntu-latest
+    if: |
+      (github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'tattiRA120') &&
+      contains(join(github.event.pull_request.labels.*.name, ','), 'safe-to-preview')
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PR_URL: ${{github.event.pull_request.html_url}}
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+        with:
+          fetch-depth: 0
+
+      - name: SetUp auto-merge
+        id: auto-merge
+        uses: dependabot/fetch-metadata@v2.4.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check if all workflows have passed
+        run: |
+          PR_URL="${{github.event.pull_request.html_url}}"
+          INTERVAL=10
+          MAX_RETRIES=180 # 30 mins max
+          CURRENT_WORKFLOW="Dependabot auto-merge"
+
+          echo "🔍 Starting stylish status check monitoring..."
+
+          for ((i=1; i<=MAX_RETRIES; i++)); do
+            # Fetch statuses
+            # Returns: <Name>|<Status> per line
+            CHECKS=$(gh pr view "$PR_URL" --json statusCheckRollup -q ".statusCheckRollup[] | {name: (.workflowName // .name // .context), status: (if .__typename == \"CheckRun\" then (if .status == \"COMPLETED\" then .conclusion else .status end) else .state end) | ascii_upcase} | select(.name != \"$CURRENT_WORKFLOW\") | \"\(.name)|\(.status)\"")
+
+            if [ -z "$CHECKS" ]; then
+              echo "⚠️ No other checks found. Assuming safe to merge."
+              exit 0
+            fi
+
+            PENDING=0
+            FAILED=0
+            PASSED=0
+
+            echo "---------------------------------------------------"
+            echo "🔄 Attempt $i/$MAX_RETRIES"
+
+            while IFS='|' read -r name status; do
+              case "$status" in
+                SUCCESS|SKIPPED|NEUTRAL)
+                  echo "✅ $name"
+                  ((PASSED++))
+                  ;;
+                FAILURE|CANCELLED|TIMED_OUT|ACTION_REQUIRED|ERROR)
+                  echo "❌ $name ($status)"
+                  ((FAILED++))
+                  ;;
+                *)
+                  echo "⏳ $name ($status)"
+                  ((PENDING++))
+                  ;;
+              esac
+            done <<< "$CHECKS"
+
+            echo "---------------------------------------------------"
+            echo "📊 Passed: $PASSED | Pending: $PENDING | Failed: $FAILED"
+
+            if [ "$FAILED" -gt 0 ]; then
+              echo "🚫 Critical check(s) failed. Aborting."
+              exit 1
+            fi
+
+            if [ "$PENDING" -eq 0 ]; then
+              echo "🎉 All checks passed! Ready to merge."
+              exit 0
+            fi
+
+            echo "💤 Waiting ${INTERVAL}s..."
+            sleep $INTERVAL
+          done
+
+          echo "⏰ Timeout waiting for checks."
+          exit 1
+      - name: Auto-merge for Dependabot PRs
+        run: gh pr merge --auto --merge "$PR_URL"
