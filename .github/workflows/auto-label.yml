@@ -23,7 +23,43 @@ jobs:
             const head_sha = context.payload.workflow_run.head_sha;
             console.log(`Checking workflows for commit: ${head_sha}`);
 
-            // 1. Get all workflow runs for this commit
+            // 1. Find the PR associated with this commit
+            const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: head_sha,
+            });
+
+            if (prs.data.length === 0) {
+              console.log('No PR found for this commit.');
+              return;
+            }
+
+            const pr = prs.data[0];
+            console.log(`Found PR #${pr.number}: ${pr.title}`);
+
+            // 2. Check changed files
+            const files = await github.rest.pulls.listFiles({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+            });
+
+            const fileNames = files.data.map(f => f.filename);
+            console.log('Files changed:', fileNames);
+
+            const hasPythonChanges = fileNames.some(f => f.endsWith('.py') || f === 'requirements.txt');
+            console.log(`Has Python changes: ${hasPythonChanges}`);
+
+            // 3. Determine required workflows
+            const requiredWorkflows = ['Dependency Review'];
+            // We can also verify CodeQL if needed, but Dependency Review is the primary gate here alongside safe-chain
+            if (hasPythonChanges) {
+              requiredWorkflows.push('pr-safe-chain');
+            }
+            console.log('Required workflows:', requiredWorkflows);
+
+            // 4. Check if we have success for required workflows
             const runs = await github.rest.actions.listWorkflowRunsForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -31,8 +67,6 @@ jobs:
               status: 'success'
             });
 
-            // 2. Check if we have success for both required workflows
-            const requiredWorkflows = ['Dependency Review', 'pr-safe-chain'];
             const finishedWorkflows = new Set(
               runs.data.workflow_runs
                 .map(run => run.name)
@@ -45,29 +79,13 @@ jobs:
             if (allPassed) {
               console.log('All security checks passed. Proceeding to label PR.');
               
-              // 3. Find the PR associated with this commit
-              // workflow_run payload usually contains pull_requests, but it's often empty for 'push' triggers
-              // We search for PRs associated with the commit
-              const prs = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              await github.rest.issues.addLabels({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                commit_sha: head_sha,
+                issue_number: pr.number,
+                labels: ['safe-to-preview']
               });
-
-              if (prs.data.length > 0) {
-                const pr = prs.data[0];
-                console.log(`Found PR #${pr.number}: ${pr.title}`);
-                
-                await github.rest.issues.addLabels({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: pr.number,
-                  labels: ['safe-to-preview']
-                });
-                console.log(`Added 'safe-to-preview' label to PR #${pr.number}`);
-              } else {
-                console.log('No PR found for this commit.');
-              }
+              console.log(`Added 'safe-to-preview' label to PR #${pr.number}`);
             } else {
               console.log('Not all security checks have passed yet.');
               console.log(`Missing: ${requiredWorkflows.filter(name => !finishedWorkflows.has(name)).join(', ')}`);
