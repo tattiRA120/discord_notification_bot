@@ -43,7 +43,7 @@ jobs:
     - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
     
     - name: Deploy to Server
-      uses: appleboy/ssh-action@7eaf76671a0d7eec5d98ee897acda4f968735a17 # v1.2.0
+      uses: appleboy/ssh-action@823bd89e131d8d508129f9443cad5855e9ba96f0 # v1.2.4
       with:
         host: ${{ secrets.GCE_HOST }}
         username: ${{ secrets.GCE_USERNAME }}
