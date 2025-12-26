@@ -42,6 +42,7 @@ jobs:
       - name: SetUp auto-merge
         id: auto-merge
         uses: dependabot/fetch-metadata@v2.4.0
+        if: github.event_name == 'pull_request'
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
