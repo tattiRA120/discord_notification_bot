@@ -52,6 +52,10 @@ jobs:
           else
             PR_URL="${{ github.event.pull_request.html_url }}"
           fi
+          
+          echo "PR_URL=$PR_URL" >> $GITHUB_ENV
+          echo "Checking status for PR: $PR_URL"
+
           INTERVAL=10
           MAX_RETRIES=180 # 30 mins max
           CURRENT_WORKFLOW="Dependabot auto-merge"
@@ -61,7 +65,8 @@ jobs:
           for ((i=1; i<=MAX_RETRIES; i++)); do
             # Fetch statuses
             # Returns: <Name>|<Status> per line
-            CHECKS=$(gh pr view "$PR_URL" --json statusCheckRollup -q ".statusCheckRollup[] | {name: (.workflowName // .name // .context), status: (if .__typename == \"CheckRun\" then (if .status == \"COMPLETED\" then .conclusion else .status end) else .state end) | ascii_upcase} | select(.name != \"$CURRENT_WORKFLOW\") | \"\(.name)|\(.status)\"")
+            # Handle empty fields gracefully using jq select/alternatives
+            CHECKS=$(gh pr view "$PR_URL" --json statusCheckRollup -q ".statusCheckRollup[] | {name: (.workflowName | select(length > 0) // .name // .context), status: (if .__typename == \"CheckRun\" then (if .status == \"COMPLETED\" then .conclusion else .status end) else .state end) | ascii_upcase} | select(.name != \"$CURRENT_WORKFLOW\") | \"\(.name)|\(.status)\"")
 
             if [ -z "$CHECKS" ]; then
               echo "⚠️ No other checks found. Assuming safe to merge."
