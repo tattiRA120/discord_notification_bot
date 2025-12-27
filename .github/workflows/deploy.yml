@@ -52,6 +52,6 @@ jobs:
         script: |
           cd ~/discord_bot
           git pull origin main
-          source venv/bin/activate
+          source ~/discord_bot/bin/activate
           pip install -r requirements.txt
           sudo supervisorctl restart discord-bot
