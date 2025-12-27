@@ -21,7 +21,7 @@ jobs:
     if: |
       (github.event_name == 'workflow_dispatch') ||
       (
-        (github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'tattiRA120') &&
+        (github.event.pull_request.user.login == 'dependabot[bot]' || github.event.pull_request.user.login == 'app/dependabot' || github.event.pull_request.user.login == 'tattiRA120') &&
         contains(join(github.event.pull_request.labels.*.name, ','), 'safe-to-preview')
       )
     env:
