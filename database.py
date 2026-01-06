@@ -605,7 +605,7 @@ async def get_annual_member_total_stats(year: str):
             await cursor.execute("""
                 SELECT member_id, SUM(total_duration) as total_duration
                 FROM member_monthly_stats
-                WHERE strftime('%Y', month_key) = ?
+                WHERE substr(month_key, 1, 4) = ?
                 GROUP BY member_id
             """, (year,))
             members_total_data = await cursor.fetchall()
