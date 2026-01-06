@@ -117,5 +117,14 @@ jobs:
 
           echo "⏰ Timeout waiting for checks."
           exit 1
+      - name: Generate GitHub App Token
+        id: app-token
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf # v2.2.1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
       - name: Auto-merge for Dependabot PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: gh pr merge --auto --merge "$PR_URL"
