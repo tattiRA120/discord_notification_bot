@@ -2,7 +2,7 @@ name: Auto Label Safe Preview
 
 on:
   workflow_run:
-    workflows: ["CodeQL", "Dependency Review"]
+    workflows: ["CodeQL", "Dependency Review", "pr-safe-chain"]
     types:
       - completed
 
