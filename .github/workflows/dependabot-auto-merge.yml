@@ -67,7 +67,7 @@ jobs:
             # Fetch statuses
             # Returns: <Name>|<Status> per line
             # Handle empty fields gracefully using jq select/alternatives
-            CHECKS=$(gh pr view "$PR_URL" --json statusCheckRollup -q ".statusCheckRollup[] | select(type == \"object\") | {name: (if .workflowName and (.workflowName|length > 0) then .workflowName else .name // .context end), status: (if .__typename == \"CheckRun\" then (if .status == \"COMPLETED\" then .conclusion else .status end) else .state end) | ascii_upcase} | select(.name != \"$CURRENT_WORKFLOW\") | \"\(.name)|\(.status)\"")
+            CHECKS=$(gh pr view "$PR_URL" --json statusCheckRollup -q "[.statusCheckRollup[] | select(type == \"object\") | {name: (if .workflowName and (.workflowName|length > 0) then .workflowName else .name // .context end), status: (if .__typename == \"CheckRun\" then (if .status == \"COMPLETED\" then .conclusion else .status end) else .state end) | ascii_upcase, date: (if .completedAt then .completedAt else .startedAt end)} | select(.name != \"$CURRENT_WORKFLOW\")] | group_by(.name) | map(max_by(.date // \"\")) | .[] | \"\(.name)|\(.status)\"")
 
             if [ -z "$CHECKS" ]; then
               echo "⚠️ No other checks found. Assuming safe to merge."
