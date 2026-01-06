@@ -285,7 +285,7 @@ class BotCommands(commands.Cog):
         # Embedを作成し、フィールドを追加
         embed = discord.Embed(
             title=f"【{year_display}】年間通話統計情報",
-            color=constants.EMBED_COLOR_SUCCESS,
+            color=constants.EMBED_COLOR_MILESTONE,
         )
         embed.add_field(
             name="年間: 平均通話時間",
@@ -624,13 +624,16 @@ class BotCommands(commands.Cog):
         description="指定した年度の年間通話統計情報を表示します（管理者用）",
     )  # nameとdescriptionを明示
     @app_commands.default_permissions(administrator=True)  # 管理者権限が必要
-    @app_commands.describe(year="表示する年度（形式: YYYY）。省略時は今年")
+    @app_commands.describe(
+        year="表示する年度（形式: YYYY）。省略時は今年",
+        public="結果をチャンネルに公開して送信するかどうか（Trueで公開）",
+    )
     @app_commands.guild_only()
     async def debug_annual_stats_callback(
-        self, interaction: discord.Interaction, year: str = None
+        self, interaction: discord.Interaction, year: str = None, public: bool = False
     ):
         logger.info(
-            f"Received /debug_annual_stats command from {interaction.user.id} in guild {interaction.guild.id} with year: {year}"
+            f"Received /debug_annual_stats command from {interaction.user.id} in guild {interaction.guild.id} with year: {year}, public: {public}"
         )
         # 年度の指定がなければ現在の年度を使用
         if year is None:
@@ -654,7 +657,9 @@ class BotCommands(commands.Cog):
             embed = await self._create_annual_stats_embed(
                 year_display, avg_duration, longest_info, ranking_text
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.response.send_message(
+                embed=embed, ephemeral=not public
+            )
             logger.info(
                 f"/debug_annual_stats command executed successfully for year {year}"
             )
