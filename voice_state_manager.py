@@ -350,6 +350,11 @@ class BotStatusUpdater:
         ボットのステータスを現在アクティブな2人以上通話チャンネルの通話時間で更新するタスク。
         constants.STATUS_UPDATE_INTERVAL_SECONDS 間隔で実行されます。
         """
+        # ボットが準備できていない、またはセッションが閉じている場合はスキップ
+        if not self.bot.is_ready() or self.bot.is_closed():
+            logger.debug("Bot is not ready or closed, skipping status update.")
+            return
+
         logger.debug("Executing status update task.")
         # 2人以上通話中のチャンネルがあるか確認
         if self.active_status_channels:
@@ -372,16 +377,22 @@ class BotStatusUpdater:
                     formatted_duration = format_duration(duration_seconds)
                     # ボットのカスタムステータスを設定
                     activity = discord.CustomActivity(name=f"{channel.name}: {formatted_duration}")
-                    await self.bot.change_presence(activity=activity)
-                    logger.info(f"Updated bot status: {activity.name}")
+                    try:
+                        await self.bot.change_presence(activity=activity)
+                        logger.info(f"Updated bot status: {activity.name}")
+                    except Exception as e:
+                        logger.warning(f"Failed to update bot status (activity): {e}")
                 else:
-                     logger.warning(f"Session start time not found for active status channel {channel_key_to_display}.")
-                     # セッション開始時間がない場合はactive_status_channelsから削除
-                     self.active_status_channels.discard(channel_key_to_display)
-                     logger.debug(f"Removed channel {channel_key_to_display} from active_status_channels due to missing session start time.")
-                     if not self.active_status_channels:
-                         await self.bot.change_presence(activity=None)
-                         logger.info("No active status channels remaining after removing invalid entry, clearing status.")
+                    logger.warning(f"Session start time not found for active status channel {channel_key_to_display}.")
+                    # セッション開始時間がない場合はactive_status_channelsから削除
+                    self.active_status_channels.discard(channel_key_to_display)
+                    logger.debug(f"Removed channel {channel_key_to_display} from active_status_channels due to missing session start time.")
+                    if not self.active_status_channels:
+                        try:
+                            await self.bot.change_presence(activity=None)
+                            logger.info("No active status channels remaining after removing invalid entry, clearing status.")
+                        except Exception as e:
+                            logger.warning(f"Failed to clear bot status: {e}")
 
             else:
                 logger.warning(f"Status display target channel {channel_key_to_display} not found or not in active sessions.")
@@ -390,13 +401,19 @@ class BotStatusUpdater:
                 self.active_status_channels.discard(channel_key_to_display)
                 logger.debug(f"Removed channel {channel_key_to_display} from active_status_channels.")
                 if not self.active_status_channels:
-                     await self.bot.change_presence(activity=None)
-                     logger.info("No active status channels remaining, clearing status.")
+                    try:
+                        await self.bot.change_presence(activity=None)
+                        logger.info("No active status channels remaining, clearing status.")
+                    except Exception as e:
+                        logger.warning(f"Failed to clear bot status: {e}")
         else:
             logger.debug("No active status channels. Clearing status.")
             # 2人以上の通話がない場合はボットのステータスをクリア
-            await self.bot.change_presence(activity=None)
-            logger.info("Cleared bot status.")
+            try:
+                await self.bot.change_presence(activity=None)
+                logger.info("Cleared bot status.")
+            except Exception as e:
+                logger.warning(f"Failed to clear bot status: {e}")
 
 
 class VoiceStateManager:
