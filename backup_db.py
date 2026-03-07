@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 DB_FILE = constants.DB_FILE_NAME
 BACKUP_DIR = constants.BACKUP_DIR_NAME
 
+
 # 同期的なデータベース接続を管理するコンテキストマネージャー
 class DatabaseConnection:
     def __init__(self, db_file):
@@ -28,13 +29,17 @@ class DatabaseConnection:
         # 例外が発生した場合は、そのまま伝播させる (Falseを返す)
         return False
 
+
 def backup_database():
     logger.info("Starting database backup.")
     if not os.path.exists(BACKUP_DIR):
         os.makedirs(BACKUP_DIR)
         logger.debug(f"Created backup directory '{BACKUP_DIR}'.")
 
-    backup_file = os.path.join(BACKUP_DIR, f"{constants.BACKUP_FILE_PREFIX}{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{constants.DB_FILE_EXTENSION}")
+    backup_file = os.path.join(
+        BACKUP_DIR,
+        f"{constants.BACKUP_FILE_PREFIX}{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}{constants.DB_FILE_EXTENSION}",
+    )
     logger.debug(f"Backup file name: {backup_file}")
 
     try:
@@ -54,20 +59,29 @@ def backup_database():
 
         # 古いバックアップファイルを削除
         logger.info("Starting deletion of old backup files.")
-        backup_files = [os.path.join(BACKUP_DIR, f) for f in os.listdir(BACKUP_DIR) if f.startswith(constants.BACKUP_FILE_PREFIX) and f.endswith(constants.DB_FILE_EXTENSION)]
-        backup_files.sort(key=lambda x: os.path.getmtime(x)) # 最終更新時間でソート
+        backup_files = [
+            os.path.join(BACKUP_DIR, f)
+            for f in os.listdir(BACKUP_DIR)
+            if f.startswith(constants.BACKUP_FILE_PREFIX)
+            and f.endswith(constants.DB_FILE_EXTENSION)
+        ]
+        backup_files.sort(key=lambda x: os.path.getmtime(x))  # 最終更新時間でソート
         logger.debug(f"Found {len(backup_files)} backup files.")
 
         # 最新のconstants.NUM_BACKUP_FILES_TO_KEEP個以外のファイルを削除
         if len(backup_files) > constants.NUM_BACKUP_FILES_TO_KEEP:
-            old_files = backup_files[:-constants.NUM_BACKUP_FILES_TO_KEEP]
-            logger.info(f"Found {len(old_files)} old files exceeding the retention count ({constants.NUM_BACKUP_FILES_TO_KEEP}).")
+            old_files = backup_files[: -constants.NUM_BACKUP_FILES_TO_KEEP]
+            logger.info(
+                f"Found {len(old_files)} old files exceeding the retention count ({constants.NUM_BACKUP_FILES_TO_KEEP})."
+            )
             for old_file in old_files:
                 try:
                     os.remove(old_file)
                     logger.info(f"Deleted old backup file: {old_file}")
                 except OSError as e:
-                    logger.error(f"An error occurred while deleting old backup file: {e}")
+                    logger.error(
+                        f"An error occurred while deleting old backup file: {e}"
+                    )
         else:
             logger.debug("No old files exceeding the retention count were found.")
 

@@ -24,11 +24,11 @@ COLUMN_TOTAL_DURATION = "total_duration"
 TABLE_USER_MUTE_STATS = "user_mute_stats"
 COLUMN_MUTE_COUNT = "mute_count"
 DEFAULT_TOTAL_DURATION = 0
-DEFAULT_LONELY_TIMEOUT_MINUTES = 180 # 3 hours
+DEFAULT_LONELY_TIMEOUT_MINUTES = 180  # 3 hours
 DEFAULT_REACTION_WAIT_MINUTES = 5
 
 # Milestone related constants
-MILESTONE_THRESHOLD_SECONDS = 36000 # マイルストーン通知の閾値（秒）
+MILESTONE_THRESHOLD_SECONDS = 36000  # マイルストーン通知の閾値（秒）
 
 # Backup related constants
 BACKUP_DIR_NAME = "backups"
@@ -38,8 +38,8 @@ DB_FILE_EXTENSION = ".db"
 SQLITE_BACKUP_ALL_PAGES = 0
 
 # Task related constants
-CRON_MONTHLY_STATS = '0 18 1 * *' # 18:00 on the 1st of every month
-CRON_ANNUAL_STATS = '0 18 31 12 *' # 18:00 on December 31st
+CRON_MONTHLY_STATS = "0 18 1 * *"  # 18:00 on the 1st of every month
+CRON_ANNUAL_STATS = "0 18 31 12 *"  # 18:00 on December 31st
 STATS_SEND_HOUR = 18
 STATS_SEND_MINUTE = 0
 DAY_OF_MONTH_FIRST = 1
@@ -47,22 +47,22 @@ DAY_OF_YEAR_LAST = 31
 MONTH_OF_YEAR_LAST = 12
 
 # Logging related constants
-LOGGING_LEVEL = "WARNING" # デフォルト値
-LOGGING_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
+LOGGING_LEVEL = "WARNING"  # デフォルト値
+LOGGING_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 
 # Bot related constants
-COMMAND_PREFIX = '!'
+COMMAND_PREFIX = "!"
 
 # Embed related constants (Discord.py Follow the color standards of discord.Colour)
-EMBED_COLOR_ERROR = 0xFF0000 # Red(Exceptionally not following the standards)
-EMBED_COLOR_SUCCESS = 0x2ECC71 # Green
-EMBED_COLOR_WARNING = 0xE67E22 # Orange
-EMBED_COLOR_INFO = 0x3498DB # Blue
-EMBED_COLOR_MILESTONE = 0xF1C40F # Gold
-EMBED_COLOR_CALL_START = 0xE74C3C # Red
-EMBED_COLOR_CALL_END = 0x5865F2 # Blurple
+EMBED_COLOR_ERROR = 0xFF0000  # Red(Exceptionally not following the standards)
+EMBED_COLOR_SUCCESS = 0x2ECC71  # Green
+EMBED_COLOR_WARNING = 0xE67E22  # Orange
+EMBED_COLOR_INFO = 0x3498DB  # Blue
+EMBED_COLOR_MILESTONE = 0xF1C40F  # Gold
+EMBED_COLOR_CALL_START = 0xE74C3C  # Red
+EMBED_COLOR_CALL_END = 0x5865F2  # Blurple
 
-RANKING_LIMIT = 10 # ランキング表示件数
+RANKING_LIMIT = 10  # ランキング表示件数
 
 EMBED_TITLE_MONTHLY_STATS = "【前月の通話統計】"
 EMBED_TITLE_ANNUAL_STATS = "【年間の通話統計】"
@@ -78,10 +78,14 @@ MESSAGE_NO_CALL_RECORDS = "は通話記録がありませんでした"
 MESSAGE_NO_CALL_HISTORY = "通話履歴がありません"
 MESSAGE_NO_RANKING_DATA = "通話時間データがありません"
 MESSAGE_NO_ACTIVE_CALLS = "現在アクティブな通話はありません"
-MESSAGE_NOTIFICATION_CHANNEL_ALREADY_SET = "通知チャンネルは既に {current_channel} に設定されています"
+MESSAGE_NOTIFICATION_CHANNEL_ALREADY_SET = (
+    "通知チャンネルは既に {current_channel} に設定されています"
+)
 MESSAGE_NOTIFICATION_CHANNEL_SET = "通知チャンネルを {channel} に設定しました"
 MESSAGE_CURRENT_SLEEP_CHECK_SETTINGS = "現在の寝落ち確認設定:\n"
-MESSAGE_LONELY_TIMEOUT_MIN_ERROR = "一人以下の状態が続く時間は1分以上の整数で指定してください。"
+MESSAGE_LONELY_TIMEOUT_MIN_ERROR = (
+    "一人以下の状態が続く時間は1分以上の整数で指定してください。"
+)
 MESSAGE_REACTION_WAIT_MIN_ERROR = "反応を待つ時間は1分以上の整数で指定してください。"
 MESSAGE_SLEEP_CHECK_SETTINGS_UPDATED = "寝落ち確認設定を更新しました:\n"
 MESSAGE_NO_MUTE_HISTORY = "まだ寝落ちミュートされたことはありません。"
@@ -105,10 +109,17 @@ EMBED_FIELD_START_TIME = "開始時間"
 EMBED_FIELD_CALL_DURATION = "通話時間"
 
 EMBED_DESCRIPTION_SLEEP_CHECK = " さん、{channel_name} chで一人になってから時間が経ちました。\n寝落ちしていませんか？反応がない場合、自動でサーバーミュートします。\nミュートをキャンセルする場合は、 :white_check_mark: を押してください。"
-EMBED_DESCRIPTION_SLEEP_CHECK_CANCEL = " さんが反応しました。\nサーバーミュートをキャンセルしました。"
+EMBED_DESCRIPTION_SLEEP_CHECK_CANCEL = (
+    " さんが反応しました。\nサーバーミュートをキャンセルしました。"
+)
 EMBED_DESCRIPTION_SLEEP_CHECK_MUTE = " さんからの反応がなかったため、サーバーミュートしました。\n再入室するとサーバーミュートが解除されます。"
-EMBED_DESCRIPTION_UNMUTE_ON_REJOIN = " さんが再入室したため、サーバーミュートを解除しました。"
+EMBED_DESCRIPTION_UNMUTE_ON_REJOIN = (
+    " さんが再入室したため、サーバーミュートを解除しました。"
+)
 
+EMBED_DESCRIPTION_MILESTONE = (
+    "{member.mention} さんが通話時間 {achieved_hours} 時間を達成しました！"
+)
 
 # Voice state related constants
 MIN_MEMBERS_FOR_SESSION = 2

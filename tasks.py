@@ -1,15 +1,16 @@
 import datetime
 from zoneinfo import ZoneInfo
 from discord.ext import tasks
-import discord # discord モジュールをインポート
+import discord  # discord モジュールをインポート
 import discord.ext.commands as commands
-import logging # logging モジュールをインポート
+import logging  # logging モジュールをインポート
 
-import config # config モジュールをインポート
-import constants # constants モジュールをインポート
+import config  # config モジュールをインポート
+import constants  # constants モジュールをインポート
 
 # ロガーを取得
 logger = logging.getLogger(__name__)
+
 
 # --- タスクを格納する Cog クラス ---
 class BotTasks(commands.Cog):
@@ -21,7 +22,9 @@ class BotTasks(commands.Cog):
         # タスクは @tasks.loop デコレータによって定義されます。
         # __init__ でタスクを開始する必要はありません。setup_tasks 関数で行います。
 
-    async def _send_stats_to_channel(self, guild, period_display, create_embed_func, embed_title):
+    async def _send_stats_to_channel(
+        self, guild, period_display, create_embed_func, embed_title
+    ):
         """
         共通の統計情報送信ロジック
 
@@ -32,27 +35,37 @@ class BotTasks(commands.Cog):
             embed_title (str): Embedのタイトル
         """
         guild_id = guild.id
-        logger.debug(f"Processing stats for guild {guild_id} for period {period_display}")
+        logger.debug(
+            f"Processing stats for guild {guild_id} for period {period_display}"
+        )
         channel_id = config.get_notification_channel_id(guild_id)
         if channel_id:
             channel = self.bot.get_channel(channel_id)
             if channel:
-                logger.debug(f"Sending stats to channel {channel_id} in guild {guild_id}")
+                logger.debug(
+                    f"Sending stats to channel {channel_id} in guild {guild_id}"
+                )
                 # create_embed_func は (guild, period_display) を受け取り、(embed, display_period) を返すことを想定
                 embed, display_period = await create_embed_func(guild, period_display)
                 if embed:
                     await channel.send(embed=embed)
-                    logger.info(f"Stats sent successfully for {display_period} in guild {guild_id}")
+                    logger.info(
+                        f"Stats sent successfully for {display_period} in guild {guild_id}"
+                    )
                 else:
-                    logger.info(f"No stats found for {display_period} in guild {guild_id}")
+                    logger.info(
+                        f"No stats found for {display_period} in guild {guild_id}"
+                    )
                     embed = discord.Embed(
                         title=embed_title,
                         description=f"{period_display}{constants.MESSAGE_NO_CALL_RECORDS}",
-                        color=constants.EMBED_COLOR_WARNING
+                        color=constants.EMBED_COLOR_WARNING,
                     )
                     await channel.send(embed=embed)
             else:
-                logger.warning(f"Notification channel {channel_id} not found for guild {guild_id}")
+                logger.warning(
+                    f"Notification channel {channel_id} not found for guild {guild_id}"
+                )
         else:
             logger.info(f"No notification channel set for guild {guild_id}")
 
@@ -61,7 +74,9 @@ class BotTasks(commands.Cog):
         年間統計情報Embedをタスクから呼び出すためのヘルパー関数。
         commands.pyのget_and_process_annual_stats_dataと_create_annual_stats_embedを呼び出す。
         """
-        logger.info(f"Creating annual stats embed for task for guild {guild.id}, year {year_str}")
+        logger.info(
+            f"Creating annual stats embed for task for guild {guild.id}, year {year_str}"
+        )
         # commands.py の get_and_process_annual_stats_data を呼び出してデータを取得
         (
             year_display,
@@ -70,11 +85,13 @@ class BotTasks(commands.Cog):
             ranking_text,
             sessions_data,
             members_total,
-        ) = await self.bot_commands_cog.get_and_process_annual_stats_data(guild, year_str)
+        ) = await self.bot_commands_cog.get_and_process_annual_stats_data(
+            guild, year_str
+        )
 
         if not sessions_data:
             logger.info(f"No annual stats found for year {year_str}. Returning None.")
-            return None, year_display # データがない場合はNoneを返す
+            return None, year_display  # データがない場合はNoneを返す
 
         # commands.py の _create_annual_stats_embed を呼び出してEmbedを作成
         embed = await self.bot_commands_cog._create_annual_stats_embed(
@@ -83,17 +100,24 @@ class BotTasks(commands.Cog):
         logger.debug("Annual stats embed for task created successfully.")
         return embed, year_display
 
-
     # --- 月間統計情報送信タスク ---
     # 毎日18:00に実行し、日付が1日かチェック
-    @tasks.loop(time=datetime.time(hour=constants.STATS_SEND_HOUR, minute=constants.STATS_SEND_MINUTE, tzinfo=ZoneInfo(constants.TIMEZONE_JST)))
+    @tasks.loop(
+        time=datetime.time(
+            hour=constants.STATS_SEND_HOUR,
+            minute=constants.STATS_SEND_MINUTE,
+            tzinfo=ZoneInfo(constants.TIMEZONE_JST),
+        )
+    )
     async def send_monthly_stats_task(self):
         now = datetime.datetime.now(ZoneInfo(constants.TIMEZONE_JST))
         # 実行日が月の1日であるかチェック
         if now.day == constants.DAY_OF_MONTH_FIRST:
             logger.info("Starting monthly stats task.")
             first_day_current = now.replace(day=constants.DAY_OF_MONTH_FIRST)
-            prev_month_last_day = first_day_current - datetime.timedelta(days=1) # timedelta(days=1) は定数化しない
+            prev_month_last_day = first_day_current - datetime.timedelta(
+                days=1
+            )  # timedelta(days=1) は定数化しない
             previous_month = prev_month_last_day.strftime("%Y-%m")
             logger.debug(f"Calculating stats for previous month: {previous_month}")
 
@@ -104,22 +128,33 @@ class BotTasks(commands.Cog):
                         guild,
                         previous_month,
                         self.bot_commands_cog._create_monthly_stats_embed,
-                        constants.EMBED_TITLE_MONTHLY_STATS
+                        constants.EMBED_TITLE_MONTHLY_STATS,
                     )
                 logger.info("Monthly stats task finished.")
             except Exception as e:
-                logger.error(f"An unexpected error occurred in monthly stats task: {e}", exc_info=True)
+                logger.error(
+                    f"An unexpected error occurred in monthly stats task: {e}",
+                    exc_info=True,
+                )
         else:
             logger.debug("Monthly stats task skipped: not the first day of the month.")
 
-
     # --- 年間統計情報送信タスク ---
     # 毎日18:00に実行し、日付が12月31日かチェック
-    @tasks.loop(time=datetime.time(hour=constants.STATS_SEND_HOUR, minute=constants.STATS_SEND_MINUTE, tzinfo=ZoneInfo(constants.TIMEZONE_JST)))
+    @tasks.loop(
+        time=datetime.time(
+            hour=constants.STATS_SEND_HOUR,
+            minute=constants.STATS_SEND_MINUTE,
+            tzinfo=ZoneInfo(constants.TIMEZONE_JST),
+        )
+    )
     async def send_annual_stats_task(self):
         now = datetime.datetime.now(ZoneInfo(constants.TIMEZONE_JST))
         # 実行日が12月31日であるかチェック
-        if now.month == constants.MONTH_OF_YEAR_LAST and now.day == constants.DAY_OF_YEAR_LAST:
+        if (
+            now.month == constants.MONTH_OF_YEAR_LAST
+            and now.day == constants.DAY_OF_YEAR_LAST
+        ):
             logger.info("Starting annual stats task.")
             year_str = str(now.year)
             logger.debug(f"Calculating stats for year: {year_str}")
@@ -130,11 +165,14 @@ class BotTasks(commands.Cog):
                     await self._send_stats_to_channel(
                         guild,
                         year_str,
-                        self._create_annual_stats_embed_for_task, # ここを修正
-                        constants.EMBED_TITLE_ANNUAL_STATS
+                        self._create_annual_stats_embed_for_task,  # ここを修正
+                        constants.EMBED_TITLE_ANNUAL_STATS,
                     )
                 logger.info("Annual stats task finished.")
             except Exception as e:
-                logger.error(f"An unexpected error occurred in annual stats task: {e}", exc_info=True)
+                logger.error(
+                    f"An unexpected error occurred in annual stats task: {e}",
+                    exc_info=True,
+                )
         else:
             logger.debug("Annual stats task skipped: not December 31st.")

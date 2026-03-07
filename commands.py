@@ -6,7 +6,6 @@ from zoneinfo import ZoneInfo
 import logging
 
 from database import (
-    get_db_connection,
     get_total_call_time,
     get_guild_settings,
     update_guild_settings,
@@ -21,9 +20,7 @@ from database import (
     get_total_mute_counts,
 )
 import config
-import voice_state_manager
 import formatters
-from voice_events import SleepCheckManager
 import constants
 
 # ロガーを取得
@@ -215,7 +212,9 @@ class BotCommands(commands.Cog):
 
     # --- 年間統計データ取得・処理用ヘルパー関数 ---
     async def get_and_process_annual_stats_data(self, guild, year: str):
-        logger.info(f"Fetching and processing annual statistics for guild {guild.id}, year {year}")
+        logger.info(
+            f"Fetching and processing annual statistics for guild {guild.id}, year {year}"
+        )
 
         # database.py から指定された年度の全セッションを取得
         sessions_data = await get_annual_voice_sessions(year)
@@ -233,7 +232,9 @@ class BotCommands(commands.Cog):
             logger.debug("No sessions found for the year, annual average is 0.")
         else:
             # 年間平均通話時間の計算
-            avg_duration = sum(sess["duration"] for sess in sessions_data) / len(sessions_data)
+            avg_duration = sum(sess["duration"] for sess in sessions_data) / len(
+                sessions_data
+            )
             logger.debug(f"Calculated annual average: {avg_duration}")
 
             # 最長通話の情報取得
@@ -244,7 +245,9 @@ class BotCommands(commands.Cog):
             ).strftime("%Y/%m/%d")
 
             longest_session_id = longest_session["id"]
-            participants_map = await get_participants_by_session_ids([longest_session_id])
+            participants_map = await get_participants_by_session_ids(
+                [longest_session_id]
+            )
             longest_participants = participants_map.get(longest_session_id, [])
 
             longest_participants_names = self._get_member_display_names(
@@ -269,7 +272,14 @@ class BotCommands(commands.Cog):
         ranking_text = "\n".join(ranking_lines) if ranking_lines else "なし"
         logger.debug(f"Annual ranking text generated:\n{ranking_text}")
 
-        return year_display, avg_duration, longest_info, ranking_text, sessions_data, members_total
+        return (
+            year_display,
+            avg_duration,
+            longest_info,
+            ranking_text,
+            sessions_data,
+            members_total,
+        )
 
     # --- 年間統計Embed作成用ヘルパー関数 ---
     # get_and_process_annual_stats_data から取得した情報をもとに、年間統計表示用のEmbedを作成します。
@@ -309,7 +319,11 @@ class BotCommands(commands.Cog):
         month="表示したい月をYYYY-MM形式で入力してください (例: 2023-01)"
     )
     @app_commands.guild_only()
-    async def stats_monthly(self, interaction: discord.Interaction, month: str = None):
+    async def stats_monthly(
+        self, interaction: discord.Interaction, month: str | None = None
+    ):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /stats monthly command from {interaction.user.id} in guild {interaction.guild.id} with month: {month}"
         )
@@ -359,6 +373,8 @@ class BotCommands(commands.Cog):
     async def stats_total(
         self, interaction: discord.Interaction, member: discord.Member
     ):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /stats total command from {interaction.user.id} in guild {interaction.guild.id} for member: {member.id}"
         )
@@ -413,6 +429,8 @@ class BotCommands(commands.Cog):
     )
     @app_commands.guild_only()
     async def stats_ranking(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /stats ranking command from {interaction.user.id} in guild {interaction.guild.id}"
         )
@@ -504,6 +522,8 @@ class BotCommands(commands.Cog):
     @stats.command(name="current", description="現在の通話状況を表示します。")
     @app_commands.guild_only()
     async def stats_current(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /stats current command from {interaction.user.id} in guild {interaction.guild.id}"
         )
@@ -553,6 +573,8 @@ class BotCommands(commands.Cog):
     )  # nameとdescriptionを明示
     @app_commands.guild_only()
     async def help_callback(self, interaction: discord.Interaction):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /help command from {interaction.user.id} in guild {interaction.guild.id}"
         )
@@ -584,6 +606,8 @@ class BotCommands(commands.Cog):
     async def changesendchannel_callback(
         self, interaction: discord.Interaction, channel: discord.TextChannel
     ):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /changesendchannel command from {interaction.user.id} in guild {interaction.guild.id} with channel: {channel.id}"
         )
@@ -630,8 +654,13 @@ class BotCommands(commands.Cog):
     )
     @app_commands.guild_only()
     async def debug_annual_stats_callback(
-        self, interaction: discord.Interaction, year: str = None, public: bool = False
+        self,
+        interaction: discord.Interaction,
+        year: str | None = None,
+        public: bool = False,
     ):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /debug_annual_stats command from {interaction.user.id} in guild {interaction.guild.id} with year: {year}, public: {public}"
         )
@@ -657,9 +686,7 @@ class BotCommands(commands.Cog):
             embed = await self._create_annual_stats_embed(
                 year_display, avg_duration, longest_info, ranking_text
             )
-            await interaction.response.send_message(
-                embed=embed, ephemeral=not public
-            )
+            await interaction.response.send_message(embed=embed, ephemeral=not public)
             logger.info(
                 f"/debug_annual_stats command executed successfully for year {year}"
             )
@@ -684,9 +711,11 @@ class BotCommands(commands.Cog):
     async def set_sleep_check_callback(
         self,
         interaction: discord.Interaction,
-        lonely_timeout_minutes: int = None,
-        reaction_wait_minutes: int = None,
+        lonely_timeout_minutes: int | None = None,
+        reaction_wait_minutes: int | None = None,
     ):
+        if not interaction.guild:
+            return
         logger.info(
             f"Received /set_sleep_check command from {interaction.user.id} in guild {interaction.guild.id} with lonely_timeout_minutes: {lonely_timeout_minutes}, reaction_wait_minutes: {reaction_wait_minutes}"
         )
