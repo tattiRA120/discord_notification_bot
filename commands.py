@@ -770,3 +770,40 @@ class BotCommands(commands.Cog):
             ephemeral=True,
         )
         logger.info("/set_sleep_check command executed successfully.")
+
+    # 手動ミュート解除コマンド
+    @app_commands.command(
+        name="unmute",
+        description="寝落ちミュートが自動で外れない場合に強制的に解除します",
+    )
+    @app_commands.guild_only()
+    async def unmute_callback(self, interaction: discord.Interaction):
+        if not interaction.guild or not isinstance(interaction.user, discord.Member):
+            return
+
+        logger.info(
+            f"Received /unmute command from {interaction.user.id} in guild {interaction.guild.id}"
+        )
+        await interaction.response.defer(ephemeral=True)
+
+        try:
+            await interaction.user.edit(mute=False, deafen=False)
+            self.sleep_check_manager.remove_bot_muted_member(interaction.user.id)
+            await interaction.followup.send(
+                "ミュートを強制解除しました。", ephemeral=True
+            )
+            logger.info(
+                f"Force unmuted member {interaction.user.display_name} ({interaction.user.id})."
+            )
+        except discord.Forbidden:
+            await interaction.followup.send(
+                "ボットにミュート解除の権限がありません。", ephemeral=True
+            )
+            logger.error(
+                f"Error: No permission to unmute member {interaction.user.display_name} ({interaction.user.id})."
+            )
+        except Exception as e:
+            await interaction.followup.send(
+                f"ミュートの解除中にエラーが発生しました: {e}", ephemeral=True
+            )
+            logger.error(f"An error occurred while forcefully unmuting member: {e}")

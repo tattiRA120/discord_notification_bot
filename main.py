@@ -209,6 +209,8 @@ async def on_ready():
             logging.info(
                 f"Before clearing commands for guild {guild.id} ({guild.name}): bot.tree.clear_commands is {bot.tree.clear_commands}, type: {type(bot.tree.clear_commands)}"
             )
+            # 既存のコマンドを一度クリアして重複を防ぐ
+            bot.tree.clear_commands(guild=guild)
 
             bot.tree.add_command(bot_commands_instance.stats, guild=guild)
             bot.tree.add_command(bot_commands_instance.help_callback, guild=guild)
@@ -221,6 +223,7 @@ async def on_ready():
             bot.tree.add_command(
                 bot_commands_instance.set_sleep_check_callback, guild=guild
             )
+            bot.tree.add_command(bot_commands_instance.unmute_callback, guild=guild)
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)
