@@ -212,18 +212,33 @@ async def on_ready():
             # 既存のコマンドを一度クリアして重複を防ぐ
             bot.tree.clear_commands(guild=guild)
 
-            bot.tree.add_command(bot_commands_instance.stats, guild=guild)
-            bot.tree.add_command(bot_commands_instance.help_callback, guild=guild)
             bot.tree.add_command(
-                bot_commands_instance.changesendchannel_callback, guild=guild
+                bot_commands_instance.stats, guild=guild, override=True
             )
             bot.tree.add_command(
-                bot_commands_instance.debug_annual_stats_callback, guild=guild
+                bot_commands_instance.help_callback, guild=guild, override=True
             )
             bot.tree.add_command(
-                bot_commands_instance.set_sleep_check_callback, guild=guild
+                bot_commands_instance.changesendchannel_callback,
+                guild=guild,
+                override=True,
             )
-            bot.tree.add_command(bot_commands_instance.unmute_callback, guild=guild)
+            bot.tree.add_command(
+                bot_commands_instance.debug_annual_stats_callback,
+                guild=guild,
+                override=True,
+            )
+            bot.tree.add_command(
+                bot_commands_instance.set_sleep_check_callback,
+                guild=guild,
+                override=True,
+            )
+            bot.tree.add_command(
+                bot_commands_instance.unmute_callback, guild=guild, override=True
+            )
+            bot.tree.add_command(
+                bot_commands_instance.unmute_callback, guild=guild, override=True
+            )
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)
