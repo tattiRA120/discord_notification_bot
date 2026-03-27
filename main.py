@@ -184,75 +184,84 @@ async def on_ready():
     # BotCommands Cog を bot.add_cog() で追加した場合にコマンド同期が安定しない問題が確認されています。
     # そのため、現状では回避策として、あえて各コマンドをギルドコマンドとして手動でツリーに追加し、同期を行っています。
     # この方法により、コマンドの登録と同期のプロセスをより確実に制御することを目指しています。
-    logging.info(
-        "Starting manual command registration and synchronization for all joined guilds."
-    )
-    synced_guild_count = 0
-    for guild in bot.guilds:
-        if guild is None:
-            logging.warning("Skipping command registration for a None guild object.")
-            continue
-        if bot.tree is None:
-            logging.error("bot.tree is None inside guild loop. This should not happen.")
-            continue
-        if not hasattr(bot.tree, "clear_commands") or bot.tree.clear_commands is None:
-            logging.error(
-                "bot.tree.clear_commands is not available or None. This should not happen."
+    if not getattr(bot, "_commands_registered", False):
+        bot._commands_registered = True  # type: ignore[attr-defined]
+        logging.info(
+            "Starting manual command registration and synchronization for all joined guilds."
+        )
+        synced_guild_count = 0
+        for guild in bot.guilds:
+            if guild is None:
+                logging.warning(
+                    "Skipping command registration for a None guild object."
+                )
+                continue
+            if bot.tree is None:
+                logging.error(
+                    "bot.tree is None inside guild loop. This should not happen."
+                )
+                continue
+            if (
+                not hasattr(bot.tree, "clear_commands")
+                or bot.tree.clear_commands is None
+            ):
+                logging.error(
+                    "bot.tree.clear_commands is not available or None. This should not happen."
+                )
+                continue
+
+            logging.info(
+                f"Starting command registration for guild {guild.id} ({guild.name})."
             )
-            continue
+            try:
+                # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
+                logging.info(
+                    f"Before clearing commands for guild {guild.id} ({guild.name}): bot.tree.clear_commands is {bot.tree.clear_commands}, type: {type(bot.tree.clear_commands)}"
+                )
+                # 既存のコマンドを一度クリアして重複を防ぐ
+                bot.tree.clear_commands(guild=guild)
+
+                bot.tree.add_command(
+                    bot_commands_instance.stats, guild=guild, override=True
+                )
+                bot.tree.add_command(
+                    bot_commands_instance.help_callback, guild=guild, override=True
+                )
+                bot.tree.add_command(
+                    bot_commands_instance.changesendchannel_callback,
+                    guild=guild,
+                    override=True,
+                )
+                bot.tree.add_command(
+                    bot_commands_instance.debug_annual_stats_callback,
+                    guild=guild,
+                    override=True,
+                )
+                bot.tree.add_command(
+                    bot_commands_instance.set_sleep_check_callback,
+                    guild=guild,
+                    override=True,
+                )
+                bot.tree.add_command(
+                    bot_commands_instance.unmute_callback, guild=guild, override=True
+                )
+
+                # ギルドコマンドを同期
+                synced_commands = await bot.tree.sync(guild=guild)
+                logging.info(
+                    f"Successfully synced commands for guild {guild.id} ({guild.name}). Synced command count: {len(synced_commands)}"
+                )
+                synced_guild_count += 1
+
+            except Exception as e:
+                logging.error(
+                    f"Failed to register or sync commands for guild {guild.id} ({guild.name}): {e}",
+                    exc_info=True,
+                )
 
         logging.info(
-            f"Starting command registration for guild {guild.id} ({guild.name})."
+            f"Command registration and synchronization completed. Successfully synced in {synced_guild_count} guilds."
         )
-        try:
-            # ギルドコマンドとしてツリーに追加 (手動登録による回避策)
-            logging.info(
-                f"Before clearing commands for guild {guild.id} ({guild.name}): bot.tree.clear_commands is {bot.tree.clear_commands}, type: {type(bot.tree.clear_commands)}"
-            )
-            # 既存のコマンドを一度クリアして重複を防ぐ
-            bot.tree.clear_commands(guild=guild)
-
-            bot.tree.add_command(
-                bot_commands_instance.stats, guild=guild, override=True
-            )
-            bot.tree.add_command(
-                bot_commands_instance.help_callback, guild=guild, override=True
-            )
-            bot.tree.add_command(
-                bot_commands_instance.changesendchannel_callback,
-                guild=guild,
-                override=True,
-            )
-            bot.tree.add_command(
-                bot_commands_instance.debug_annual_stats_callback,
-                guild=guild,
-                override=True,
-            )
-            bot.tree.add_command(
-                bot_commands_instance.set_sleep_check_callback,
-                guild=guild,
-                override=True,
-            )
-            bot.tree.add_command(
-                bot_commands_instance.unmute_callback, guild=guild, override=True
-            )
-
-            # ギルドコマンドを同期
-            synced_commands = await bot.tree.sync(guild=guild)
-            logging.info(
-                f"Successfully synced commands for guild {guild.id} ({guild.name}). Synced command count: {len(synced_commands)}"
-            )
-            synced_guild_count += 1
-
-        except Exception as e:
-            logging.error(
-                f"Failed to register or sync commands for guild {guild.id} ({guild.name}): {e}",
-                exc_info=True,
-            )
-
-    logging.info(
-        f"Command registration and synchronization completed. Successfully synced in {synced_guild_count} guilds."
-    )
     logging.warning("Bot is ready.")
 
 
