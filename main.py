@@ -236,9 +236,6 @@ async def on_ready():
             bot.tree.add_command(
                 bot_commands_instance.unmute_callback, guild=guild, override=True
             )
-            bot.tree.add_command(
-                bot_commands_instance.unmute_callback, guild=guild, override=True
-            )
 
             # ギルドコマンドを同期
             synced_commands = await bot.tree.sync(guild=guild)
