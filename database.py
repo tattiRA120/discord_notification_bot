@@ -135,6 +135,17 @@ async def init_db():
         """)
         logger.debug("Checked or created table 'mute_events'.")
 
+        # active_muted_members テーブル: 現在寝落ちミュート状態にあるメンバーを記録
+        # member_id: メンバーID (主キー)
+        # muted_at: ミュートされた時刻 (ISO 8601 形式)
+        await cursor.execute("""
+            CREATE TABLE IF NOT EXISTS active_muted_members (
+                member_id INTEGER PRIMARY KEY,
+                muted_at TEXT NOT NULL
+            )
+        """)
+        logger.debug("Checked or created table 'active_muted_members'.")
+
         # インデックスの作成 (クエリパフォーマンス向上のため)
         # TODO: SQLクエリ構築の代替手段を検討 - f-stringを使用しているが、テーブル名/カラム名は定数由来のため直接的なSQLインジェクションリスクは低い。
         # より構造的なクエリビルダやライブラリの利用も検討可能。
@@ -478,6 +489,59 @@ async def get_total_mute_counts() -> list[tuple[int, int]]:
             ]
     except Exception as e:
         logger.error(f"An error occurred while fetching total mute counts: {e}")
+        return []
+
+
+async def add_active_muted_member(member_id: int):
+    """
+    現在寝落ちミュート状態のメンバーとしてデータベースに記録します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            await cursor.execute(
+                "INSERT OR REPLACE INTO active_muted_members (member_id, muted_at) VALUES (?, ?)",
+                (member_id, timestamp),
+            )
+            await conn.commit()
+            logger.debug(f"Added member {member_id} to active_muted_members in DB.")
+    except Exception as e:
+        logger.error(
+            f"Error adding member {member_id} to active_muted_members in DB: {e}"
+        )
+
+
+async def remove_active_muted_member(member_id: int):
+    """
+    寝落ちミュート状態から解除されたメンバーをデータベースから削除します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute(
+                "DELETE FROM active_muted_members WHERE member_id = ?", (member_id,)
+            )
+            await conn.commit()
+            logger.debug(f"Removed member {member_id} from active_muted_members in DB.")
+    except Exception as e:
+        logger.error(
+            f"Error removing member {member_id} from active_muted_members in DB: {e}"
+        )
+
+
+async def get_all_active_muted_members() -> list[int]:
+    """
+    現在寝落ちミュート状態として記録されているすべてのメンバーIDを取得します。
+    """
+    try:
+        async with DatabaseConnection() as conn:
+            cursor = await conn.cursor()
+            await cursor.execute("SELECT member_id FROM active_muted_members")
+            results = await cursor.fetchall()
+            return [row["member_id"] for row in results]
+    except Exception as e:
+        logger.error(f"Error fetching active muted members from DB: {e}")
         return []
 
 

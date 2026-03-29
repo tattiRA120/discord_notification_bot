@@ -788,7 +788,7 @@ class BotCommands(commands.Cog):
 
         try:
             await interaction.user.edit(mute=False, deafen=False)
-            self.sleep_check_manager.remove_bot_muted_member(interaction.user.id)
+            await self.sleep_check_manager.remove_bot_muted_member(interaction.user.id)
             await interaction.followup.send(
                 "ミュートを強制解除しました。", ephemeral=True
             )

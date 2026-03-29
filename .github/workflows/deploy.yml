@@ -50,8 +50,11 @@ jobs:
         key: ${{ secrets.GCE_SSH_KEY }}
         port: ${{ secrets.GCE_SSH_PORT }}
         script: |
+          set -e
           cd ~/discord_bot
-          git pull origin main
+          git fetch origin main
+          git reset --hard origin/main
           source ~/discord_bot/bin/activate
+          pip install --upgrade pip
           pip install -r requirements.txt
           sudo supervisorctl restart discord-bot

@@ -9,6 +9,9 @@ from database import (
     get_guild_settings,
     update_member_monthly_stats,
     increment_mute_count,
+    add_active_muted_member,
+    remove_active_muted_member,
+    get_all_active_muted_members,
 )
 import config
 from voice_state_manager import VoiceStateManager
@@ -62,16 +65,23 @@ class SleepCheckManager:
                     f"An error occurred while deleting message {message_id}: {e}"
                 )
 
+    async def load_active_muted_members(self):
+        members = await get_all_active_muted_members()
+        self.bot_muted_members = members
+        logger.info(f"Loaded {len(members)} bot_muted_members from DB.")
+
     # bot_muted_members にメンバーを追加するヘルパー関数
-    def add_bot_muted_member(self, member_id: int):
+    async def add_bot_muted_member(self, member_id: int):
         if member_id not in self.bot_muted_members:
             self.bot_muted_members.append(member_id)
+            await add_active_muted_member(member_id)
             logger.info(f"Added member {member_id} to bot_muted_members.")
 
     # bot_muted_members からメンバーを削除するヘルパー関数
-    def remove_bot_muted_member(self, member_id: int):
+    async def remove_bot_muted_member(self, member_id: int):
         if member_id in self.bot_muted_members:
             self.bot_muted_members.remove(member_id)
+            await remove_active_muted_member(member_id)
             logger.info(f"Removed member {member_id} from bot_muted_members.")
 
     # lonely_voice_channels にチャンネルを追加するヘルパー関数
@@ -367,7 +377,7 @@ class SleepCheckManager:
                             f"Muted member {member.display_name} ({member.id})."
                         )
                         # ボットがミュートしたメンバーを記録
-                        self.add_bot_muted_member(member.id)
+                        await self.add_bot_muted_member(member.id)
 
                         if notification_channel_id:
                             notification_channel = self.bot.get_channel(
@@ -592,6 +602,48 @@ class VoiceEvents(commands.Cog):
                         f"Message {message_id} deletion requested due to multiple members joining."
                     )
 
+            # チャンネルが2人以上になったので、もしすでに入室中かつミュート中のメンバーがいればミュート解除する
+            for current_member in channel_after.members:
+                if (
+                    current_member.id in self.sleep_check_manager.bot_muted_members
+                    and current_member.id != member.id
+                ):
+                    logger.info(
+                        f"Channel {channel_after.id} is no longer lonely. Unmuting existing member {current_member.id}."
+                    )
+
+                    async def unmute_existing_member(m: discord.Member):
+                        try:
+                            await m.edit(mute=False, deafen=False)
+                            await self.sleep_check_manager.remove_bot_muted_member(m.id)
+                            logger.info(
+                                f"Unmuted existing member {m.display_name} ({m.id}) due to channel becoming active."
+                            )
+
+                            notification_channel_id = (
+                                config.get_notification_channel_id(m.guild.id)
+                            )
+                            if notification_channel_id:
+                                notification_channel = self.bot.get_channel(
+                                    notification_channel_id
+                                )
+                                if notification_channel:
+                                    try:
+                                        embed = discord.Embed(
+                                            title=constants.EMBED_TITLE_SLEEP_CHECK,
+                                            description=f"{m.mention}{constants.EMBED_DESCRIPTION_UNMUTE_ON_CHANNEL_ACTIVE}",
+                                            color=constants.EMBED_COLOR_SUCCESS,
+                                        )
+                                        await notification_channel.send(embed=embed)
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Failed to send unmute message for existing member: {e}"
+                                        )
+                        except Exception as e:
+                            logger.error(f"Error unmuting existing member: {e}")
+
+                    asyncio.create_task(unmute_existing_member(current_member))
+
         # VoiceStateManager に処理を委譲し、統計更新が必要なデータを取得
         ended_sessions_data = await self.voice_state_manager.notify_member_joined(
             member, channel_after
@@ -614,7 +666,7 @@ class VoiceEvents(commands.Cog):
                 await asyncio.sleep(constants.UNMUTE_DELAY_SECONDS)
                 try:
                     await m.edit(mute=False, deafen=False)
-                    self.sleep_check_manager.remove_bot_muted_member(m.id)
+                    await self.sleep_check_manager.remove_bot_muted_member(m.id)
                     logger.info(
                         f"Unmuted member {m.display_name} ({m.id}) due to rejoining."
                     )
@@ -1055,7 +1107,7 @@ class VoiceEvents(commands.Cog):
                 await asyncio.sleep(constants.UNMUTE_DELAY_SECONDS)  # 1秒待機
                 try:
                     await m.edit(mute=False, deafen=False)
-                    self.sleep_check_manager.remove_bot_muted_member(m.id)
+                    await self.sleep_check_manager.remove_bot_muted_member(m.id)
                     logger.info(
                         f"Unmuted member {m.display_name} ({m.id}) due to channel move."
                     )
