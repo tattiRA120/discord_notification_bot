@@ -2,8 +2,8 @@ name: Safe Chain Auto Retry
 
 on:
   schedule:
-    # 毎時0分に実行
-    - cron: '0 * * * *'
+    # 毎日UTC 0:00に実行
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 permissions:
@@ -43,7 +43,7 @@ jobs:
             const workflowId = workflowRes.data.id;
             console.log(`Target workflow ID (pr-safe-chain.yml): ${workflowId}`);
 
-            // 2. 過去36時間以内に開始され、失敗したワークフロー実行の一覧を取得
+            // 2. 過去48時間以内に開始され、失敗したワークフロー実行の一覧を取得
             const runsRes = await github.rest.actions.listWorkflowRuns({
               owner,
               repo,
@@ -52,13 +52,13 @@ jobs:
               per_page: 30
             });
 
-            const cutoffTime = new Date(Date.now() - 36 * 60 * 60 * 1000); // 36時間前
+            const cutoffTime = new Date(Date.now() - 48 * 60 * 60 * 1000); // 48時間前
             const runsToRetry = runsRes.data.workflow_runs.filter(run => {
               const runCreatedAt = new Date(run.created_at);
               return runCreatedAt > cutoffTime;
             });
 
-            console.log(`Found ${runsToRetry.length} failed runs in the last 36 hours.`);
+            console.log(`Found ${runsToRetry.length} failed runs in the last 48 hours.`);
 
             // 3. 該当するワークフローを再実行
             for (const run of runsToRetry) {
