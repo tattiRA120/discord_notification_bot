@@ -6,6 +6,7 @@ on:
     paths:
       - '**.py'
       - 'requirements.txt'
+      - '**.sh'
       - '.github/workflows/deploy.yml'
 
 jobs:
@@ -54,6 +55,14 @@ jobs:
           cd ~/discord_bot
           git fetch origin main
           git reset --hard origin/main
+          if [ ! -f .env ]; then
+            touch .env
+          fi
+          if grep -q "DISCORD_WEBHOOK_URL=" .env; then
+            sed -i 's|DISCORD_WEBHOOK_URL=.*|DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK_URL }}"|' .env
+          else
+            echo 'DISCORD_WEBHOOK_URL="${{ secrets.DISCORD_WEBHOOK_URL }}"' >> .env
+          fi
           source ~/discord_bot/bin/activate
           pip install --upgrade pip
           pip install -r requirements.txt
