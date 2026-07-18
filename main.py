@@ -27,6 +27,15 @@ log_level = os.getenv("LOG_LEVEL", constants.LOGGING_LEVEL).upper()
 logging.basicConfig(level=log_level, format=constants.LOGGING_FORMAT)
 logger = logging.getLogger()  # ルートロガーを取得
 
+# 内部ログ出力用のロガー（DiscordHandler自身のエラーや情報出力を逃がし、無限ループを防ぐ）
+internal_logger = logging.getLogger("bot.internal")
+internal_logger.propagate = False
+internal_console_handler = logging.StreamHandler(sys.stderr)
+internal_console_handler.setFormatter(logging.Formatter(constants.LOGGING_FORMAT))
+internal_logger.addHandler(internal_console_handler)
+# 内部ロガーのレベルはルートロガーと同期、またはINFO以上とする
+internal_logger.setLevel(logging.INFO)
+
 
 # カスタムロギングハンドラ
 class DiscordHandler(logging.Handler):
@@ -36,10 +45,14 @@ class DiscordHandler(logging.Handler):
         self.setFormatter(logging.Formatter(constants.LOGGING_FORMAT))
         self.sent_messages = []  # 送信済みのメッセージを保存するリスト
         self.max_messages = 10  # 保存するメッセージの最大数
+        self.buffer = []  # 未送信ログのバッファ
+        self.max_buffer_size = 100  # バッファの最大件数
+        self.is_flushing = False  # フラッシュ処理の排他フラグ
 
     def emit(self, record):
-        if not self.bot.is_ready():
-            return  # ボットが準備できていない場合は送信しない
+        # 内部ロガー自身のログはDiscordに送信しない（無限ループ防止）
+        if record.name == "bot.internal":
+            return
 
         message = record.getMessage()
         if message in self.sent_messages:
@@ -48,21 +61,57 @@ class DiscordHandler(logging.Handler):
         if record.levelno < logging.WARNING:
             return  # WARNING未満のログはDiscordに送信しない
 
+        # 「Bot is ready.」メッセージはDiscordに送信しない
+        if message == "Bot is ready.":
+            return
+
         # メッセージを送信済みのリストに追加
         self.sent_messages.append(message)
         if len(self.sent_messages) > self.max_messages:
             self.sent_messages.pop(0)  # 古いメッセージを削除
 
-        # 「Bot is ready.」メッセージはDiscordに送信しない
-        if record.getMessage() == "Bot is ready.":
+        # ボットが準備できていない場合はバッファに追加して終了
+        if not self.bot.is_ready():
+            self.add_to_buffer(record)
             return
 
         # Discordに送信するタスクを非同期で実行
         self.bot.loop.create_task(self.send_log_to_discord(record))
 
-    async def send_log_to_discord(self, record):
+    def add_to_buffer(self, record):
+        # バッファにログを追加する（最大件数制限あり）
+        self.buffer.append(record)
+        if len(self.buffer) > self.max_buffer_size:
+            self.buffer.pop(0)  # 最も古いログを破棄
+
+    async def flush_buffer(self):
+        # バッファに溜まったログのフラッシュを試みる
+        if self.is_flushing or not self.bot.is_ready() or not self.buffer:
+            return
+        self.is_flushing = True
+        try:
+            internal_logger.info(
+                f"Flushing {len(self.buffer)} buffered logs to Discord..."
+            )
+            while self.buffer and self.bot.is_ready():
+                record = self.buffer[0]
+                success = await self._send_single_log(record)
+                if success:
+                    self.buffer.pop(0)
+                else:
+                    # 送信に失敗した場合は一旦終了（次回の接続回復や呼び出し時に再試行）
+                    internal_logger.warning(
+                        "Failed to flush buffer log, pausing flush process."
+                    )
+                    break
+        finally:
+            self.is_flushing = False
+
+    async def _send_single_log(self, record):
+        # 実際にDiscordへ1件のログを送信する
         try:
             embed = create_log_embed(record)
+            sent_any = False
             for guild in self.bot.guilds:
                 channel_id = config.get_notification_channel_id(guild.id)
                 if channel_id:
@@ -70,18 +119,28 @@ class DiscordHandler(logging.Handler):
                     if channel:
                         try:
                             await channel.send(embed=embed)
+                            sent_any = True
                         except discord.Forbidden:
-                            logging.warning(
+                            internal_logger.warning(
                                 f"Bot does not have permission to send messages to channel {channel.id} in guild {guild.name}."
                             )
                         except Exception as e:
-                            logging.error(
+                            internal_logger.error(
                                 f"Failed to send log embed to Discord channel {channel.id}: {e}"
                             )
+            return sent_any
         except Exception as e:
-            logging.error(
-                f"Error in DiscordHandler.send_log_to_discord: {e}", exc_info=True
+            internal_logger.error(
+                f"Error in DiscordHandler._send_single_log: {e}", exc_info=True
             )
+            return False
+
+    async def send_log_to_discord(self, record):
+        success = await self._send_single_log(record)
+        if not success:
+            self.add_to_buffer(record)
+        # 溜まっているバッファがあれば送信を試みる
+        self.bot.loop.create_task(self.flush_buffer())
 
 
 # 設定の読み込み (環境変数からトークンを取得)
@@ -122,6 +181,7 @@ async def on_ready():
     discord_handler = DiscordHandler(bot)
     logger.addHandler(discord_handler)
     logging.info("DiscordHandler added to logger.")
+    bot.loop.create_task(discord_handler.flush_buffer())
 
     # データベースの初期化
     try:
