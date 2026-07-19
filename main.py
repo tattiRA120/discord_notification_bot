@@ -4,9 +4,9 @@ import os
 import logging
 import sys
 from dotenv import load_dotenv
+import aiohttp
 
 import constants
-import config
 from database import init_db
 from formatters import create_log_embed
 
@@ -48,6 +48,7 @@ class DiscordHandler(logging.Handler):
         self.buffer = []  # 未送信ログのバッファ
         self.max_buffer_size = 100  # バッファの最大件数
         self.is_flushing = False  # フラッシュ処理の排他フラグ
+        self.webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
 
     def emit(self, record):
         # 内部ロガー自身のログはDiscordに送信しない（無限ループ防止）
@@ -70,13 +71,17 @@ class DiscordHandler(logging.Handler):
         if len(self.sent_messages) > self.max_messages:
             self.sent_messages.pop(0)  # 古いメッセージを削除
 
-        # ボットが準備できていない場合はバッファに追加して終了
-        if not self.bot.is_ready():
-            self.add_to_buffer(record)
+        # Webhook URLが設定されていない場合は何もしない
+        if not self.webhook_url:
             return
 
-        # Discordに送信するタスクを非同期で実行
-        self.bot.loop.create_task(self.send_log_to_discord(record))
+        # Webhookでの送信はBot自体の接続状況に依存しないため、
+        # イベントループが動いていれば即座に非同期タスクとして送信を試みる
+        if self.bot.loop and self.bot.loop.is_running():
+            self.bot.loop.create_task(self.send_log_to_discord(record))
+        else:
+            # イベントループが稼働していない場合はバッファに保存する
+            self.add_to_buffer(record)
 
     def add_to_buffer(self, record):
         # バッファにログを追加する（最大件数制限あり）
@@ -86,53 +91,41 @@ class DiscordHandler(logging.Handler):
 
     async def flush_buffer(self):
         # バッファに溜まったログのフラッシュを試みる
-        if self.is_flushing or not self.bot.is_ready() or not self.buffer:
+        if not self.webhook_url or self.is_flushing or not self.buffer:
+            return
+        if not (self.bot.loop and self.bot.loop.is_running()):
             return
         self.is_flushing = True
         try:
             internal_logger.info(
-                f"Flushing {len(self.buffer)} buffered logs to Discord..."
+                f"Flushing {len(self.buffer)} buffered logs to Discord Webhook..."
             )
-            while self.buffer and self.bot.is_ready():
+            while self.buffer:
                 record = self.buffer[0]
                 success = await self._send_single_log(record)
                 if success:
                     self.buffer.pop(0)
                 else:
-                    # 送信に失敗した場合は一旦終了（次回の接続回復や呼び出し時に再試行）
+                    # 送信に失敗した場合は一旦終了（ネットワーク未接続など）
                     internal_logger.warning(
-                        "Failed to flush buffer log, pausing flush process."
+                        "Failed to flush buffer log via Webhook, pausing flush process."
                     )
                     break
         finally:
             self.is_flushing = False
 
     async def _send_single_log(self, record):
-        # 実際にDiscordへ1件のログを送信する
+        # 実際にWebhookへ1件のログを送信する
+        if not self.webhook_url:
+            return False
         try:
             embed = create_log_embed(record)
-            sent_any = False
-            for guild in self.bot.guilds:
-                channel_id = config.get_notification_channel_id(guild.id)
-                if channel_id:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel:
-                        try:
-                            await channel.send(embed=embed)
-                            sent_any = True
-                        except discord.Forbidden:
-                            internal_logger.warning(
-                                f"Bot does not have permission to send messages to channel {channel.id} in guild {guild.name}."
-                            )
-                        except Exception as e:
-                            internal_logger.error(
-                                f"Failed to send log embed to Discord channel {channel.id}: {e}"
-                            )
-            return sent_any
+            async with aiohttp.ClientSession() as session:
+                webhook = discord.Webhook.from_url(self.webhook_url, session=session)
+                await webhook.send(embed=embed)
+            return True
         except Exception as e:
-            internal_logger.error(
-                f"Error in DiscordHandler._send_single_log: {e}", exc_info=True
-            )
+            internal_logger.error(f"Failed to send log embed to Discord Webhook: {e}")
             return False
 
     async def send_log_to_discord(self, record):
@@ -140,7 +133,8 @@ class DiscordHandler(logging.Handler):
         if not success:
             self.add_to_buffer(record)
         # 溜まっているバッファがあれば送信を試みる
-        self.bot.loop.create_task(self.flush_buffer())
+        if self.buffer and self.bot.loop and self.bot.loop.is_running():
+            self.bot.loop.create_task(self.flush_buffer())
 
 
 # 設定の読み込み (環境変数からトークンを取得)
