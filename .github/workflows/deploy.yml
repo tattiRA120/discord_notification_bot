@@ -67,3 +67,10 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
           sudo supervisorctl restart discord-bot
+
+    - name: Notify failure to Discord
+      if: failure()
+      run: |
+        if [ -n "${{ secrets.DISCORD_WEBHOOK_URL }}" ]; then
+          curl -s -H "Content-Type: application/json" -X POST -d '{"content": "🚨 **[デプロイ失敗]** 本番環境 (GCE) への自動デプロイが失敗しました。\nGCE インスタンスの稼働状況や SSH 接続設定（IP/ポート）を確認してください。\n詳細: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"}' "${{ secrets.DISCORD_WEBHOOK_URL }}" || true
+        fi
