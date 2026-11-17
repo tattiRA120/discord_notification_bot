@@ -1,24 +1,25 @@
+import logging
+import os
+import sys
+
+import aiohttp
 import discord
 from discord.ext import commands
-import os
-import logging
-import sys
 from dotenv import load_dotenv
-import aiohttp
 
 import constants
-from database import init_db
-from formatters import create_log_embed
 
 # 他のモジュールのインポート
 from commands import BotCommands
+from database import init_db
+from formatters import create_log_embed
 from tasks import BotTasks
-from voice_events import VoiceEvents, SleepCheckManager
+from voice_events import SleepCheckManager, VoiceEvents
 from voice_state_manager import (
-    VoiceStateManager,
+    BotStatusUpdater,
     CallNotificationManager,
     StatisticalSessionManager,
-    BotStatusUpdater,
+    VoiceStateManager,
 )
 
 # ロギングの設定
@@ -55,16 +56,21 @@ class DiscordHandler(logging.Handler):
         if record.name == "bot.internal":
             return
 
-        message = record.getMessage()
-        if message in self.sent_messages:
-            return  # 同じメッセージが既に送信されている場合は送信しない
-
         if record.levelno < logging.WARNING:
             return  # WARNING未満のログはDiscordに送信しない
+
+        message = record.getMessage()
 
         # 「Bot is ready.」メッセージはDiscordに送信しない
         if message == "Bot is ready.":
             return
+
+        # discord.py の Gateway 自動再接続ログ（一時障害時のリトライ等）はDiscordに送信しない
+        if "Attempting a reconnect" in message:
+            return
+
+        if message in self.sent_messages:
+            return  # 同じメッセージが既に送信されている場合は送信しない
 
         # メッセージを送信済みのリストに追加
         self.sent_messages.append(message)
